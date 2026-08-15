@@ -124,6 +124,11 @@ add_if "${HOMELIST}" "${HOME}" .claude/scheduled-tasks
 if [[ -d "${HOME}/.claude/projects" ]]; then
   ( cd "${HOME}" && find .claude/projects -maxdepth 2 -type d -name memory -print ) >> "${HOMELIST}"
 fi
+# The hook wiring and the sub-agent definitions ARE the security configuration:
+# which PreToolUse gates run, and what the quarantine-reader is allowed to fetch.
+# Restoring skills without these brings back the behaviour but not the guards.
+add_if "${HOMELIST}" "${HOME}" .claude/settings.json
+add_if "${HOMELIST}" "${HOME}" .claude/agents
 # MAIN orchestrator channel tokens + pairing state, per provider. bot.pid and
 # inbox/ are runtime/transient and intentionally excluded. Since #915 the
 # main state dir is install-scoped (<repo>/.claude/channels/<provider>); the
