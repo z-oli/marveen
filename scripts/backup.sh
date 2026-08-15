@@ -66,6 +66,11 @@ add_if "${REPOLIST}" "${REPO_ROOT}" store/claudeclaw.db-shm
 add_if "${REPOLIST}" "${REPO_ROOT}" store/claudeclaw.db-wal
 add_if "${REPOLIST}" "${REPO_ROOT}" store/.dashboard-token
 add_if "${REPOLIST}" "${REPO_ROOT}" store/config-overrides.json
+# Security state. Both live under the gitignored store/, so git is NOT a second
+# copy of them: without these two lines a restore silently comes back with the
+# autonomy levels and the approved-egress list missing.
+add_if "${REPOLIST}" "${REPO_ROOT}" store/autonomy-config.json
+add_if "${REPOLIST}" "${REPO_ROOT}" store/egress-allowlist.json
 add_if "${REPOLIST}" "${REPO_ROOT}" .env
 add_if "${REPOLIST}" "${REPO_ROOT}" scheduled-tasks.json
 add_if "${REPOLIST}" "${REPO_ROOT}" assets/meetings
@@ -80,6 +85,11 @@ fi
 # home/ group (relative to $HOME)
 add_if "${HOMELIST}" "${HOME}" .claude/skills
 add_if "${HOMELIST}" "${HOME}" .claude/scheduled-tasks
+# The hook wiring and the sub-agent definitions ARE the security configuration:
+# which PreToolUse gates run, and what the quarantine-reader is allowed to fetch.
+# Restoring skills without these brings back the behaviour but not the guards.
+add_if "${HOMELIST}" "${HOME}" .claude/settings.json
+add_if "${HOMELIST}" "${HOME}" .claude/agents
 # MAIN orchestrator channel tokens + pairing state, per provider. bot.pid and
 # inbox/ are runtime/transient and intentionally excluded.
 if [[ -d "${HOME}/.claude/channels" ]]; then

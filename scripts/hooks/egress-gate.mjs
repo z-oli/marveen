@@ -71,7 +71,7 @@ const DASHBOARD_PORT = (() => {
 // Anything not on this list (or the runtime allowlist) must go through the
 // quarantine-reader sub-agent. Keep sorted and documented so additions are
 // intentional, not accidental.
-const ALLOWED_PREFIXES = [
+export const ALLOWED_PREFIXES = [
   // GitHub REST API
   'https://api.github.com/',
   // Google OAuth token endpoint
