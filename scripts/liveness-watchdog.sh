@@ -92,6 +92,66 @@ if [[ -n "$btime" ]]; then
   fi
 fi
 
+# --- latent-dependency self-test --------------------------------------------
+# WHY (2026-08-15 post-mortem): the outage was NOT caused by the power cut. A
+# `brew upgrade node@22` on Aug 12 removed the globally npm-installed `claude`
+# CLI, and every service kept running from memory for three days, so nothing
+# looked broken. The reboot merely swept the running processes away and the
+# dashboard then exited 1 on every start, because the binary it invokes was
+# gone. A liveness check alone would have caught it three days late; these
+# checks catch that class the day it happens, while everything still "works".
+#
+# Same failure mode, second instance: the PreToolUse gates name a versioned
+# Homebrew Cellar path. The next node upgrade renames that directory, and the
+# Bash gate is deliberately fail-open, so it would stop guarding in silence.
+degraded=()
+
+# The launchd PATH is what the services actually get, not the interactive shell's.
+LAUNCHD_PATH="/opt/homebrew/opt/node@22/bin:$HOME/.local/bin:/opt/homebrew/bin:$HOME/.bun/bin:/usr/local/bin:/usr/bin:/bin"
+PATH="$LAUNCHD_PATH" command -v claude >/dev/null 2>&1 \
+  || degraded+=("a claude CLI nincs a launchd PATH-ján (ez vitte el a rendszert 2026-08-15-én)")
+
+# Every interpreter the PreToolUse hooks name must exist, or the gate it runs is
+# not a gate any more. Read the paths out of the live settings, never hardcode.
+if [[ -f "$HOME/.claude/settings.json" ]]; then
+  while read -r interp; do
+    [[ -z "$interp" ]] && continue
+    [[ -x "$interp" ]] || degraded+=("a hook interpretere hiányzik: ${interp} -- a kimenő-adat kapu NEM fut")
+  done < <(python3 - <<'PY' 2>/dev/null
+import json, os, re
+p = os.path.expanduser('~/.claude/settings.json')
+try:
+    d = json.load(open(p))
+except Exception:
+    raise SystemExit(0)
+seen = set()
+for entry in d.get('hooks', {}).get('PreToolUse', []):
+    for h in entry.get('hooks', []):
+        for m in re.findall(r'"(/[^"\s]+/bin/[^"\s]+)"', h.get('command', '')):
+            if m not in seen:
+                seen.add(m)
+                print(m)
+PY
+)
+fi
+
+DEGRADED_STATE="$STORE/.liveness-degraded"
+if [[ ${#degraded[@]} -gt 0 ]]; then
+  d_detail="$(printf '%s; ' "${degraded[@]}")"; d_detail="${d_detail%; }"
+  d_last=0
+  [[ -f "$DEGRADED_STATE" ]] && d_last="$(tr -dc '0-9' <"$DEGRADED_STATE" 2>/dev/null || echo 0)"
+  d_last="${d_last:-0}"
+  # Not an outage: everything still runs. Alert once a day so it cannot rot for
+  # three days again, but never every ten minutes.
+  if (( now - d_last >= 86400 )); then
+    notify "Néma hiba a telepítésben, most még minden fut, de a következő újraindulás megbukna rajta: ${d_detail}"
+    echo "$now" >"$DEGRADED_STATE" 2>/dev/null || true
+  fi
+  log "degraded: $d_detail"
+else
+  rm -f "$DEGRADED_STATE" 2>/dev/null || true
+fi
+
 # --- health checks ----------------------------------------------------------
 problems=()
 
