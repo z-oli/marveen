@@ -80,14 +80,33 @@ btime="$(/usr/sbin/sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ *sec = \([
 if [[ -n "$btime" ]]; then
   prev_btime=""
   [[ -f "$BTIME_STATE" ]] && prev_btime="$(tr -dc '0-9' <"$BTIME_STATE" 2>/dev/null)"
-  if [[ "$prev_btime" != "$btime" ]]; then
+  if [[ -z "$prev_btime" ]]; then
     echo "$btime" >"$BTIME_STATE" 2>/dev/null || true
-    if [[ -n "$prev_btime" ]]; then
+    log "btime baseline initialised ($btime); no alert on first run"
+  else
+    drift=$(( btime > prev_btime ? btime - prev_btime : prev_btime - btime ))
+    # TWO guards, both learned the hard way on 2026-08-16, when this block sent
+    # the owner two "the machine rebooted" messages about a reboot that had
+    # happened NINETEEN HOURS earlier:
+    #
+    # 1. kern.boottime is not a constant. The kernel keeps refining it against
+    #    NTP, so the seconds field jitters by a second or so (07:37:06 vs
+    #    07:37:07). An exact != comparison reads every jitter as a fresh boot,
+    #    which is an alert loop, not a watchdog. A real reboot moves btime by
+    #    minutes at least, so anything under a minute is noise.
+    # 2. Even a genuine change is only worth reporting while it is NEWS. This
+    #    job runs every ten minutes, so a real reboot is caught within ten
+    #    minutes; a "boot" that is hours old means the state file was lost or
+    #    the clock moved, not that the machine just came back.
+    if (( drift > 60 )); then
+      echo "$btime" >"$BTIME_STATE" 2>/dev/null || true
+      boot_age_min=$(( (now - btime) / 60 ))
       boot_txt="$(date -r "$btime" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "@$btime")"
-      up_min=$(( (now - btime) / 60 ))
-      notify "A gép újraindult. Boot: ${boot_txt}. Azóta ${up_min} perc telt el. Ez host szintű restart, nem alkalmazás-hiba."
-    else
-      log "btime baseline initialised ($btime); no alert on first run"
+      if (( boot_age_min <= 30 )); then
+        notify "A gép újraindult ${boot_txt}-kor, ${boot_age_min} perce. Host szintű restart, nem alkalmazás-hiba. Most nézem, hogy minden visszajött-e."
+      else
+        log "btime moved by ${drift}s but the boot is ${boot_age_min}m old; baseline updated, no alert"
+      fi
     fi
   fi
 fi
