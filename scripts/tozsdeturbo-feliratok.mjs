@@ -82,7 +82,14 @@ for (const [i, href] of munka.entries()) {
   p.on('response', figyelo)
   try {
     await p.goto('https://tozsdeturbo.hu' + href, { waitUntil: 'domcontentloaded', timeout: 45000 })
-    await p.waitForTimeout(4000)
+    // VARJUK MEG az iframe-et, ne fix ideig varjunk ra. 2026-08-27-en a fix 4
+    // masodperc TIZ lecket konyvelt el "nincs video (szoveges lecke)"-kent,
+    // holott mind a tizen volt Vimeo-video, csak lassabban toltodott. Ez a
+    // legrosszabb fajta hiba: nem szall el, nem hianyzik semmi a naplobol, csak
+    // a lecke csendben atkerul a rossz kategoriaba, es soha tobbet nem nezunk ra.
+    // A 15 masodperc merve: a lassu leckek is 12 alatt megjelentek.
+    await p.waitForSelector('iframe[src*="vimeo"]', { timeout: 15000 }).catch(() => {})
+    await p.waitForTimeout(1500)
     // A parancsot ISMETELNI kell. Egyetlen korai postMessage elvesz, mert a
     // Vimeo player meg nem all keszen -- az elso tomeges futasnal emiatt jott
     // harom leckere "NINCS felirat", holott egyesevel mindharom mukodott.
