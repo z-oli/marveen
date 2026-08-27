@@ -99,6 +99,31 @@ export function isInertReadOnlyCommand(command) {
   return READ_ONLY_TOOLS.has(first)
 }
 
+// One shell statement per element. Splitting only ever gives the scanner LESS
+// text per unit, never more, so a send shape can be dropped from consideration
+// but never invented.
+const SEGMENT_SPLIT = /[;\n]|&&|\|\||\||&/
+
+// Drop the statements that provably cannot send, keep the rest for scanning.
+//
+// Whole-command matching was too blunt to help in practice: an agent almost
+// never runs a bare `grep`, it runs `echo ...; grep ...; python3 ...`, and one
+// quoted pattern in the middle used to condemn the lot. Measured right after
+// the first version of this fix shipped: the very command written to prove the
+// grep case now passed was itself denied, because an echo sat in front of it.
+//
+// NOT applied when an interpreter heredoc survived the strip. Inside a python
+// body a line like `cat = requests_call(url)` starts with a word that happens
+// to name a read-only shell tool, and dropping it would hide a real send.
+// Shell segmentation has no meaning inside another language anyway.
+export function executablePart(command) {
+  if (/<<-?\s*['"]?[A-Za-z_]/.test(command)) return command
+  return command
+    .split(SEGMENT_SPLIT)
+    .filter((seg) => !isInertReadOnlyCommand(seg))
+    .join('\n')
+}
+
 // Remove heredoc bodies that are written to a file. Returns the part of the
 // command that can actually run.
 export function stripDataHeredocs(command) {
@@ -162,11 +187,9 @@ export function checkOutbound(toolName, toolInput, runtimeList = { domains: [], 
   const command = String(toolInput?.command ?? '')
   if (!command) return null
 
-  // A lone read-only command has no way to send, so its arguments are text.
-  if (isInertReadOnlyCommand(command)) return null
-
-  // Heredoc bodies headed for a file are text too; the rest can run.
-  const executable = stripDataHeredocs(command)
+  // Heredoc bodies headed for a file are text, and so are the arguments of any
+  // statement that has no way to reach the network. What is left can run.
+  const executable = executablePart(stripDataHeredocs(command))
   const sendKind = detectSend(executable)
   if (!sendKind) return null
 
