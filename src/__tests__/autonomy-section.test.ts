@@ -129,6 +129,8 @@ describe('ensureAutonomySection', () => {
     expect(level1Block).not.toContain('approval-request')
     // Level 1 must have inter-agent message and MEGÁLL
     expect(level1Block).toContain('marveen-api.sh message level1-agent')
+    // Fork (45494a87): a raw POST must not creep back into the level-1 recipe.
+    expect(level1Block).not.toContain('/api/messages')
     expect(level1Block).toContain('ÁLLJ MEG')
   })
 
