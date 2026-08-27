@@ -103,9 +103,11 @@ describe('ensureAutonomySection', () => {
     setup('agent-b', '# Agent B\n')
     ensureAutonomySection('agent-b')
     const result = read('agent-b')
-    // The approval POST must contain the actual agent name
+    // The approval POST must contain the actual agent name. The name now arrives via an
+    // env var set a few lines ABOVE the URL (the body is built in python, not inline), so
+    // the window has to reach back far enough to include it.
     const postIdx = result.indexOf('/api/approvals')
-    const snippet = result.slice(postIdx - 50, postIdx + 300)
+    const snippet = result.slice(postIdx - 600, postIdx + 300)
     expect(snippet).toContain('agent-b')
     expect(snippet).not.toContain('AGENT_NAME')
   })
@@ -118,8 +120,13 @@ describe('ensureAutonomySection', () => {
     const level2Idx = result.indexOf('Level 2')
     const level1Block = result.slice(level1Idx, level2Idx)
     expect(level1Block).not.toContain('/api/approvals')
-    // Level 1 must have inter-agent message and MEGÁLL
-    expect(level1Block).toContain('/api/messages')
+    // Level 1 must have inter-agent message and MEGÁLL. The message goes through
+    // agent-msg.sh, not a raw curl: the helper checks the HTTP status AND the id, and
+    // takes the body on stdin so the shell cannot silently truncate it. That matters
+    // most here -- if this notification is lost, the agent still stopped, and nobody
+    // knows. The second assertion pins that down: a raw POST must not creep back in.
+    expect(level1Block).toContain('agent-msg.sh')
+    expect(level1Block).not.toContain('/api/messages')
     expect(level1Block).toContain('ÁLLJ MEG')
   })
 

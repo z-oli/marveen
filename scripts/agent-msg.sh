@@ -24,7 +24,34 @@ URL="http://localhost:${PORT}/api/messages"
 LOG="$BASE/store/agent-msg-failures.log"
 
 FROM="${1:?from required}"; TO="${2:?to required}"; C="${3:?content required (or - for STDIN)}"
-[ "$C" = "-" ] && C="$(cat)"
+# A TARTALOM CSAK STDIN-ROL JOHET (2026-08-27). Az inline, idezett argumentum
+# alakot SZANDEKOSAN elutasitjuk -- nem azert, mert kenyelmetlen, hanem mert
+# NEMÁN CSONKIT. Aznap ketszer fordult elo: egy visszaperjel harom kapcsolo-nevet
+# tuntetett el egy uzenetbol, egy idezojel pedig a szoveg felet vagta le. A shell
+# a tartalmat MAR CSONKAN adta at, a szkript hibatlanul elkuldte, a szerver
+# hibatlanul tarolta, es az eredmeny "OK id=<n>" lett. A kuldes sikerult, a
+# TARTALOM volt hianyos -- es ez csak akkor derult ki, amikor a cimzett szolt.
+#
+# EZERT NEM DETEKTALJUK, HANEM MEGSZUNTETJUK. Stdin-rol a szkript a teljes
+# folyamot olvassa; a tartalmon nincs shell-ertelmezes, tehat nincs mit elvagni.
+# Ugyanaz az elv, mint a fleet tobbi mai javitasanal: a rossz allapotot szuntesd
+# meg, ne a felismereset epitsd.
+if [ "$C" != "-" ]; then
+  cat >&2 <<'SUGO'
+FAIL: a tartalmat STDIN-rol kell adni, nem argumentumkent.
+
+  HELYTELEN:  bash scripts/agent-msg.sh <from> <to> "a szoveg"
+  HELYES:     bash scripts/agent-msg.sh <from> <to> - < uzenet.txt
+              printf '%s\n' "a szoveg" | bash scripts/agent-msg.sh <from> <to> -
+
+MIERT: az idezett argumentum a shellben NEMÁN csonkulhat (idezojel, visszaperjel,
+dollar), es a kuldes ettol meg "OK"-t ad. Stdin-nel ez nem fordulhat elo.
+Hosszabb uzenetnel amugy is fajlt erdemes hasznalni: a fajl merete (wc -c) es a
+kimenetben megjeleno bajt=<n> osszevetheto.
+SUGO
+  exit 1
+fi
+C="$(cat)"
 [ -r "$TOKEN_FILE" ] || { echo "FAIL: no token file at $TOKEN_FILE"; exit 1; }
 TOKEN="$(cat "$TOKEN_FILE")"
 
@@ -42,7 +69,15 @@ try:
 except Exception:
   print("")' 2>/dev/null)"
   if { [ "$CODE" = "200" ] || [ "$CODE" = "201" ]; } && [ -n "$ID" ]; then
-    echo "OK id=$ID"; exit 0
+    # A hosszt is kiirjuk, hogy a HIVO ossze tudja vetni azzal, amit KULDENI AKART.
+    # 2026-08-27: ketszer fordult elo, hogy a tartalom mar a HIVO shelljeben csonkult
+    # (visszaperjel, majd idezojel egy inline, idezett argumentumban), es a kuldes
+    # ettol meg "OK id=<n>"-t adott -- a kuldes sikerult, a TARTALOM volt hianyos.
+    # FONTOS: egy szkripten BELULI visszaolvasas ezt NEM fogta volna meg, mert a
+    # csonkitas mar a $C-be erkezes ELOTT megtortent; a szkript csonkat hasonlitott
+    # volna csonkahoz. Ezert a helyes eljaras: a tartalom FAJLBOL menjen (`- < fajl`),
+    # es a hivo vesse ossze ezt a szamot a fajl meretevel (`wc -c`).
+    echo "OK id=$ID bajt=$(printf '%s' "$C" | wc -c | tr -d ' ')"; exit 0
   fi
   sleep 1
 done
