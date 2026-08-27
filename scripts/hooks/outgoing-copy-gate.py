@@ -549,6 +549,13 @@ def _hit_context(prose: str, pos: int, length: int) -> str:
 # napindito ("3.9-es"), 2026-08-26 a szunetmentes-valasz ("2024-es"). Mindketszer
 # ATFOGALMAZTAM a mondatot, ami rossz javitas: a szoveg romlik attol, hogy a kapu
 # hibas. Ezert a szam+toldalek alak is technikai regio lett. NEM a szotarbol vettem
+# GATECLI827 (2026-08-27): HARMADSZOR, es megint ugyanaz az osztaly -- most a
+# PARANCSSORI KAPCSOLON. Egy hasznalati utmutatoban a "--ar 1006" kapcsolobol
+# "ar" lesz, es az a szotarban ott van, mert onallo szokent "ár" kellene. A kapu
+# emiatt dobta vissza azt az uzenetet, ami eppen azt magyarazta el a gazdanak,
+# hogyan hasznalja a naplot. Egy kapcsolonev nem magyar szo, tehat technikai
+# regio, mint az utvonal vagy a fajlnev. A lookbehind miatt a "md-ket" alaku
+# toldalek NEM esik ide: ott betu all a kotojel elott.
 # ki az "es"-t: az onallo szokent tovabbra is valodi hiba. A javitas nem a szotarbol
 # vesz ki (az elrontana a valodi talalatokat is), hanem a technikai regiokat
 # vagja ki a vizsgalt szovegbol. A gondolatjel- es nev-ellenorzes NEM ezen fut.
@@ -560,6 +567,7 @@ TECHNICAL = re.compile(
       | \b\w+\.[A-Za-z]{2,10}\b     # fajlnev / domain (video.mp4, marveen.io)
       | \b[\w-]*/[\w/-]+            # utvonal / slug
       | \d[\d.,]*-\w+                # SZAM + MAGYAR TOLDALEK (2024-es, 3.9-es, 540W-os)
+      | (?<![\w-])--?[A-Za-z][\w-]*  # PARANCSSORI KAPCSOLO (--ar, --n, -n)
     """,
     re.X,
 )
@@ -605,6 +613,33 @@ def accentless_evidence(words):
 HYPHEN_SUFFIXES = {"ket", "ot", "es"}
 # Egy szo, ami betu/szam/pont utani kotojelre tapad: HTML-es, PDF-ot, md-ket.
 HYPHEN_ATTACHED = re.compile(r"[\w.]-([a-záéíóöőúüű]+)", re.IGNORECASE)
+
+
+def acronym_hits(plain):
+    """Szotari szavak, amelyek MINDEN elofordulasukban csupa nagybetus jelolesek.
+
+    GATETICKER827 (2026-08-27): a tozsdei jelolesek (ES, GC, NQ, CL, SI, 6E)
+    ekezet nelkuli nagybetus rovidesek, es az "ES" pont egybeesik az "és"
+    ekezetlen alakjaval. Egy naplo-hasznalati utmutato tele van veluk.
+    A feltetel KETTOS, es a masodik a lenyeg: az elofordulas legyen csupa
+    nagybetus, DE a sora tartalmazzon kisbetut is. Igy egy csupa nagybetus
+    CIMSOR ("KET DOLOG KELL") tovabbra is atvizsgalasra kerul -- ott a szo
+    valoban magyar szo, csak a cimsor emeli meg.
+    Es ugyanaz a szamolo elv, mint a kotojeles toldaleknal: EGYETLEN normal
+    elofordulas visszahozza a szot a vizsgalatba, kulonben egy ticker elrejtene
+    egy valodi hibat ugyanabban az uzenetben.
+    """
+    jelolt = {}
+    for sor in plain.split("\n"):
+        van_kisbetu = any(ch.islower() for ch in sor)
+        for m in WORD.finditer(sor):
+            szo = m.group(0)
+            kulcs = szo.lower()
+            if kulcs not in ACCENTLESS:
+                continue
+            jeloles = szo.isupper() and len(szo) > 1 and van_kisbetu
+            jelolt[kulcs] = jelolt.get(kulcs, True) and jeloles
+    return {k for k, v in jelolt.items() if v}
 
 
 def hyphen_suffix_hits(plain):
@@ -778,7 +813,13 @@ def audit(text: str):
         # gazda-tokent viszi el a kotojel elol ("CLAUDE.md-ket" -> " -ket"),
         # tehat a prozaban mar nem latszik, mihez tapadt a toldalek.
         suffixes = hyphen_suffix_hits(plain)
-        hits = sorted({w for w in words if w in ACCENTLESS and w not in suffixes})
+        # A ket kivetel MAS bemeneten dolgozik, es ez szandekos.
+        # A kotojeles toldalekhoz a NYERS szoveg kell: a technikai stripper pont
+        # a gazda-tokent viszi el a kotojel elol ("CLAUDE.md-ket" -> " -ket").
+        # A jelolesekhez viszont a STRIPPELT szoveg, kulonben egy "1-es sorszam"
+        # kisbetus toredeke eltuntetne a mentesseget egy valodi ES tickerrol.
+        mentes = suffixes | acronym_hits(prose)
+        hits = sorted({w for w in words if w in ACCENTLESS and w not in mentes})
         # Az aranyot is a prozan merjuk: a technikai tokenekben nincs ekezet, tehat
         # egy kodban gazdag, egyebkent helyes level aranyat lefele huznak.
         letters = sum(1 for ch in prose if ch.isalpha())
