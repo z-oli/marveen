@@ -56,6 +56,73 @@ const SEND_PATTERNS = [
   ['rsync to remote', /(^|[\s;|&])rsync\s+[\s\S]{0,200}?\S+@\S+:/],
 ]
 
+// --- Data context: text that CANNOT execute -------------------------------
+// WHY (2026-08-27, owner request): the patterns above match the command TEXT,
+// and text is not always a call. Measured: every false positive this gate has
+// produced landed in the "destination not readable" branch, because the match
+// came from a curl EXAMPLE being written into a file or searched for in one --
+// three agents in one morning, none of them sending anything anywhere.
+//
+// The danger of a false alarm is not the interruption. It is that a gate which
+// cries wolf gets worked around, and then it is not there for the real case.
+//
+// So this section removes only what PROVABLY cannot send. Both rules are
+// structural, not heuristic: a heredoc body redirected into a file is never
+// executed, and a lone read-only command with no pipeline and no redirect has
+// no way to reach the network whatever its arguments say. Anything uncertain
+// stays in scope: an interpreter heredoc (`python3 - <<PY`) IS executed, so it
+// is left alone, and so is every pipeline.
+
+// The prefix before `<<` when the heredoc body is written to a file, not run.
+// Anything else -- an interpreter, a bare `<<`, an unrecognised command -- is
+// treated as executed, which keeps the uncertain case inside the gate.
+const DATA_SINK = /(^|[\s;&|])(cat\s*>>?|tee(\s+-a)?)\s+\S+\s*$/
+
+// Commands that cannot spawn a process or open a socket, whatever the argument
+// says. Deliberately excludes awk (system()), sed (GNU s///e), find (-exec),
+// less/vi (shell escape) and every interpreter: those can run what they read.
+const READ_ONLY_TOOLS = new Set([
+  'grep', 'egrep', 'fgrep', 'rg', 'ag', 'cat', 'head', 'tail', 'wc', 'diff',
+  'sort', 'uniq', 'cut', 'tr', 'nl', 'strings', 'stat', 'ls', 'jq', 'basename',
+  'dirname', 'shasum', 'md5', 'cmp', 'comm',
+])
+
+// A pipeline, a redirect, a substitution or a second statement means the
+// read-only tool is no longer alone -- and then its output may well be going
+// somewhere. Only a single simple command qualifies.
+const SHELL_COMPOSITION = /[|;&`\n<>]|\$\(/
+
+export function isInertReadOnlyCommand(command) {
+  const trimmed = command.trim()
+  if (!trimmed || SHELL_COMPOSITION.test(trimmed)) return false
+  const first = trimmed.split(/\s+/)[0]
+  return READ_ONLY_TOOLS.has(first)
+}
+
+// Remove heredoc bodies that are written to a file. Returns the part of the
+// command that can actually run.
+export function stripDataHeredocs(command) {
+  const lines = command.split('\n')
+  const out = []
+  let closing = null
+  for (const line of lines) {
+    if (closing !== null) {
+      // Inside a data heredoc: drop the body, keep the terminator's position
+      // meaningless to the scanner.
+      if (line.trim() === closing) closing = null
+      continue
+    }
+    const m = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(line)
+    if (m && DATA_SINK.test(line.slice(0, m.index))) {
+      closing = m[2]
+      out.push(line.slice(0, m.index))
+      continue
+    }
+    out.push(line)
+  }
+  return out.join('\n')
+}
+
 export function detectSend(command) {
   for (const [label, re] of SEND_PATTERNS) {
     if (re.test(command)) return label
@@ -95,10 +162,15 @@ export function checkOutbound(toolName, toolInput, runtimeList = { domains: [], 
   const command = String(toolInput?.command ?? '')
   if (!command) return null
 
-  const sendKind = detectSend(command)
+  // A lone read-only command has no way to send, so its arguments are text.
+  if (isInertReadOnlyCommand(command)) return null
+
+  // Heredoc bodies headed for a file are text too; the rest can run.
+  const executable = stripDataHeredocs(command)
+  const sendKind = detectSend(executable)
   if (!sendKind) return null
 
-  const urls = extractUrls(command)
+  const urls = extractUrls(executable)
   if (urls.length === 0) {
     // A send was detected with no http(s) destination on the command line
     // (nc/scp/rsync, or a URL built from a variable). Cannot verify -> deny.
