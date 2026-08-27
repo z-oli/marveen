@@ -32,7 +32,11 @@ HOME = os.path.expanduser("~")
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MANIFEST = os.path.join(REPO_ROOT, "store", "integrity-manifest.json")
 
-# Each entry: (label, base directory, relative path or directory, suffix filter).
+# Directories never worth hashing, whatever the entry.
+ALWAYS_SKIP = (".git", "__pycache__", "node_modules")
+
+# Each entry: (label, base directory, relative path or directory, suffix filter)
+# with an optional 5th element: extra directory names to skip while walking.
 # Kept explicit rather than globbing $HOME: a manifest that quietly grows to
 # cover unrelated files gets ignored, and an ignored manifest is worse than none.
 WATCHED = [
@@ -46,6 +50,18 @@ WATCHED = [
     ("policy", REPO_ROOT, "store/autonomy-config.json", None),
     ("policy", REPO_ROOT, "store/egress-allowlist.json", None),
     ("settings", HOME, ".claude/settings.json", None),
+    # 2026-08-27: the gap this manifest was built to close, but did not cover.
+    # CLAUDE.md is the whole operating rulebook of the main agent and IS written
+    # by the agent (the self-rename skill edits it); the per-agent files below are
+    # the full instruction set of each sub-agent, and the main agent authored all
+    # of them. Both load as instructions at every start, exactly like a skill.
+    # Measured: editing CLAUDE.md left --check reporting "unchanged".
+    ("instructions", REPO_ROOT, "CLAUDE.md", None),
+    # Walks agents/<name>/: CLAUDE.md, SOUL.md, agent-config.json, .mcp.json,
+    # .claude/settings.json and .claude/agents/*.md. memory/ and scripts/ are
+    # skipped on purpose: those are the agent's own notes and tools, they change
+    # with every ordinary work round, and a manifest that cries daily gets muted.
+    ("instructions", REPO_ROOT, "agents", (".md", ".json"), ("memory", "scripts")),
 ]
 
 
@@ -60,13 +76,15 @@ def sha(path):
 def collect():
     """Map of 'label:display-path' -> sha256 for every watched file that exists."""
     out = {}
-    for label, base, rel, suffixes in WATCHED:
+    for entry in WATCHED:
+        label, base, rel, suffixes = entry[:4]
+        extra_skip = entry[4] if len(entry) > 4 else ()
         full = os.path.join(base, rel)
         if os.path.isfile(full):
             out[f"{label}:{rel}"] = sha(full)
         elif os.path.isdir(full):
             for root, dirs, files in os.walk(full):
-                dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", "node_modules")]
+                dirs[:] = [d for d in dirs if d not in ALWAYS_SKIP and d not in extra_skip]
                 for name in sorted(files):
                     if suffixes and not name.endswith(suffixes):
                         continue
