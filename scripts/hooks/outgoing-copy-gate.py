@@ -707,6 +707,40 @@ AMBIGUOUS_TRIGGER = {
 def accentless_evidence(words):
     return {w for w in words if w in ACCENTLESS and w not in AMBIGUOUS_TRIGGER}
 
+# KOTOJELES TOLDALEK (2026-08-27, sajat hamis pozitiv a Telegram-uton): a WORD
+# regex a kotojelnel es a pontnal vag, ezert a "CLAUDE.md-ket" harom tokenne
+# esik szet (claude, md, ket), es a "ket" ekezethibanak latszik -- holott ott
+# nem a "ket" szo all, hanem a -ket TARGYRAGOS TOLDALEK, ami ekezet nelkul
+# helyes. A kapu emiatt utasitotta vissza a teljes uzenetet, ketszer egymas
+# utan, mikozben a szoveg hibatlan volt.
+# A kivetel SZUK: csak azokra a szotari bejegyzesekre all, amelyek EGYBEN
+# ervenyes, ekezet nelkuli magyar toldalekok is, es csak akkor, ha a szo
+# kozvetlenul egy kotojel utan all. Igy a "ket dolgot" tovabbra is hiba, es a
+# "md-bol" (helyesen -bol) sem valik lathatatlanna: a "bol" nincs a szotarban.
+HYPHEN_SUFFIXES = {"ket", "ot", "es"}
+# Egy szo, ami betu/szam/pont utani kotojelre tapad: HTML-es, PDF-ot, md-ket.
+HYPHEN_ATTACHED = re.compile(r"[\w.]-([a-záéíóöőúüű]+)", re.IGNORECASE)
+
+
+def hyphen_suffix_hits(plain):
+    """Szotari szavak, amelyek KIZAROLAG kotojeles toldalekkent allnak a szovegben.
+
+    A szamolas nem elhagyhato. Ha csak azt neznenk, VAN-E toldalekos elofordulas,
+    egyetlen "API-ket" lathatatlanna tenne minden onallo "ket" hibat ugyanabban
+    az uzenetben -- vagyis a hamis pozitiv javitasabol nema hamis NEGATIV lenne,
+    ami rosszabb. Ezert a szo csak akkor mentesul, ha MINDEN elofordulasa
+    kotojelhez tapad.
+    """
+    out = set()
+    for w in HYPHEN_SUFFIXES:
+        attached = len(re.findall(r"[\w.]-" + w + r"\b", plain, re.IGNORECASE))
+        if not attached:
+            continue
+        total = len(re.findall(r"\b" + w + r"\b", plain, re.IGNORECASE))
+        if total == attached:
+            out.add(w)
+    return out
+
 
 # collect_bash_body / collect_mcp_body moved VERBATIM to email_extract.py
 # (EMAILKAPU901 PR1): the level-2 approval gate hashes the same letter this
@@ -863,7 +897,11 @@ def audit(text: str):
     tok_pos = accent_check_tokens(prose)
     words = [w for w, _ in tok_pos]
     if is_hungarian(plain) or accentless_evidence(words):
-        hits = sorted({w for w in words if w in ACCENTLESS})
+        # A NYERS szovegen keressuk, nem a prozan: a technikai stripper pont a
+        # gazda-tokent viszi el a kotojel elol ("CLAUDE.md-ket" -> " -ket"),
+        # tehat a prozaban mar nem latszik, mihez tapadt a toldalek.
+        suffixes = hyphen_suffix_hits(plain)
+        hits = sorted({w for w in words if w in ACCENTLESS and w not in suffixes})
         # Az aranyot is a prozan merjuk: a technikai tokenekben nincs ekezet, tehat
         # egy kodban gazdag, egyebkent helyes level aranyat lefele huznak.
         letters = sum(1 for ch in prose if ch.isalpha())
