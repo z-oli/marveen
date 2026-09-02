@@ -28,6 +28,11 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$NAPLO"; }
 STASHELT=0
+# Az eles fa MEG erintetlen. A veg() uzenete ezen mulik: 2026-09-02-en a push
+# elbukott, es a kimeno ertesites AKKOR IS azt allitotta, hogy "az eles fahoz nem
+# nyultam" -- holott a rebase mar lefutott rajta. Egy hibauzenet, ami a legrosszabb
+# pillanatban hazudik a fa allapotarol, rosszabb, mint a hiba maga.
+ELES_ERINTVE=0
 veg() {  # veg <status> <uzenet>
   if [ "$STASHELT" = "1" ]; then
     # A felretett szerkesztesek MINDEN agon visszakerulnek, a hibasakon is: a
@@ -44,7 +49,12 @@ veg() {  # veg <status> <uzenet>
   case "$1" in
     ok|nincs-ujdonsag) : ;;
     *)
-      printf '%s\n' "[UPSTREAM-SZINKRON] $1: $2. Naplo: store/upstream-szinkron.log. Kezi kor kell, az eles fahoz nem nyultam." \
+      if [ "$ELES_ERINTVE" = "1" ]; then
+        FA="FIGYELEM: az eles fa MAR REBASE-ELVE van (HEAD=$(git -C "$REPO" rev-parse --short HEAD)), a hiba EZUTAN tortent."
+      else
+        FA="Az eles fahoz nem nyultam."
+      fi
+      printf '%s\n' "[UPSTREAM-SZINKRON] $1: $2. Naplo: store/upstream-szinkron.log. Kezi kor kell. $FA" \
         | bash "$REPO/scripts/agent-msg.sh" marveen marveen - >>"$NAPLO" 2>&1 || log "az ertesites nem ment ki"
       ;;
   esac
@@ -76,7 +86,18 @@ log "$UJ uj upstream commit"
 #    utkozni; ha metszik egymast, kezi kor kell, mert ott dontes szuletik.
 PISZKOS="$(git diff --name-only)"
 if [ -n "$PISZKOS" ]; then
-  UPSTREAM_FAJLOK="$(git diff --name-only "HEAD..upstream/$AG")"
+  # HAROM PONT, NEM KETTO -- ez a kulonbseg ket ejszakan at kihagyatta a szinkront.
+  # A ket-pontos alak (HEAD..upstream/AG) MINDEN eltero fajlt felsorol, tehat a fork
+  # SAJAT fajljait is, amikhez az upstream hozza sem nyult: azok pusztan attol kerulnek
+  # a listara, hogy nalunk mas a tartalmuk. A stash pop viszont CSAK akkor tud utkozni,
+  # ha a rebase megvaltoztatja a fajl tartalmat, es az kizarolag UPSTREAM-OLDALI
+  # valtozasbol johet. A harom-pontos alak (HEAD...upstream/AG) a merge-base-tol nezi az
+  # upstream oldalt, tehat pontosan azt meri, amitol a kapu ovni akar.
+  # MERVE 2026-09-02: ket-pontos 222 fajl -> a metszet harom (liveness-watchdog.sh,
+  # skill-promote.sh, tozsdeturbo-feliratok.mjs), es MINDHAROMRA nulla a
+  # `git log HEAD..upstream/main -- <fajl>`, tehat mindharom hamis pozitiv volt.
+  # Harom-pontos 197 fajl -> a metszet URES. A kapu tovabbra is fog, ha valodi az utkozes.
+  UPSTREAM_FAJLOK="$(git diff --name-only "HEAD...upstream/$AG")"
   METSZET="$(comm -12 <(printf '%s\n' "$PISZKOS" | sort) <(printf '%s\n' "$UPSTREAM_FAJLOK" | sort))"
   if [ -n "$METSZET" ]; then
     veg "kihagyva" "nem commitolt szerkesztes olyan fajlon, amit az upstream is modositott: $(printf '%s' "$METSZET" | tr '\n' ' ')"
@@ -106,8 +127,25 @@ log "proba rendben, uj HEAD: $UJ_HEAD"
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   veg "kihagyva" "a munkafa kozben modosult; kezi kor kell"
 fi
+# A jelzo CSAK a SIKERES rebase utan billen at: egy elbukott rebase-t az --abort
+# visszaallit, tehat ott az eles fa tenylegesen erintetlen marad.
 git rebase "upstream/$AG" >>"$NAPLO" 2>&1 || { git rebase --abort 2>/dev/null; veg "hiba" "az eles rebase elbukott, pedig a proba atment"; }
+ELES_ERINTVE=1
 npm run build >>"$NAPLO" 2>&1 || veg "hiba" "az eles build elbukott, pedig a proban atment"
-git push origin "$AG" >>"$NAPLO" 2>&1 || veg "hiba" "a push elbukott (hitelesites?)"
+# A push a REBASE UTAN megy, tehat a fork tortenete ujrairodott: a mar feltoltott
+# commitjaink uj hasht kaptak. Egy sima push ezt SOHA nem tudja atvinni
+# (non-fast-forward) -- ez SZERKEZETI, nem alkalmi, tehat minden ejjel ide futott
+# volna be. Merve 2026-09-02: a rebase es a build atment, a push elszallt, es a
+# regi uzenet meg hitelesitesi hibat is sejtetett egy szerkezeti ok helyett.
+# Ezert force, DE LEASE-SZEL: a lease csak akkor engedi felulirni az agat, ha az
+# ott ugyanaz, mint amit mi utoljara lattunk -- vagyis ha kozben MAS pusholt,
+# a push ELBUKIK, nem eltemeti a munkajat.
+#
+# A FETCH NEM ELHAGYHATO: a lease a HELYI origin/<ag> hivatkozashoz merice. Ha az
+# elavult, a lease atmegy egy olyan agra is, amire kozben mar pusholtak -- vagyis
+# pontosan a vedelem veszne el, amiert a lease-t hasznaljuk. Zoli jovahagyasa a
+# force pushra: 2026-09-02, Telegram 995.
+git fetch origin --quiet 2>>"$NAPLO" || veg "hiba" "a rebase es a build ATMENT, de a git fetch origin elbukott, ezert a force-with-lease vedelme nem lenne ervenyes -- nem pusholtam"
+git push --force-with-lease origin "$AG" >>"$NAPLO" 2>&1 || veg "hiba" "a rebase es a build ATMENT, de a push elbukott. Ha a lease utasitotta el, akkor kozben MAS pusholt az origin/$AG-re -- ilyenkor NE eroltesd a force-ot, elobb nezd meg, mi az. A naploban all a git valasza."
 
 veg "ok" "$UJ upstream commit atvezetve es feltoltve"
