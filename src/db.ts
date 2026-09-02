@@ -3599,6 +3599,19 @@ export function clearPendingTaskRetryOwnerAlert(taskName: string, agentName: str
 // The model and endpoint come from config (EMBED_MODEL / EMBED_URL /
 // EMBED_DIMS) instead of a hardcoded literal; see the rationale block in
 // config.ts. Defaults reproduce the previous behaviour exactly.
+//
+// ES AMIT A KONFIG-ALAPU ALAKKAL EGYUTT NEM SZABAD ELVESZITENI (2026-09-23, rebase):
+// nalunk a modell bge-m3, NEM a fenti alapertelmezes. 2026-08-17-en cserealtuk le a
+// nomic-embed-text-et, mert az angol-kozpontu es 768 dimenzios; magyar lekerdezesekre
+// merve gyenge volt (a "nema hiba, nullat ad hibauzenet nelkul" kerdesre nem a pontosan
+// errol szolo emlek jott elsonek). A bge-m3 tobbnyelvu es 1024 dimenzios.
+//
+// *** A KET MODELL DIMENZIOJA KULONBOZIK, TEHAT A TAROLT VEKTOROK NEM HASONLITHATOK
+// OSSZE AZ UJAKKAL. *** A config alapertelmezese `nomic-embed-text`, tehat ha az
+// EMBED_MODEL nincs beallitva, a kovetkezo embedding 768 dimenzios lesz, es NEMAN
+// keveredik a meglevo 1024 dimenziosakkal. Modellvaltas utan KOTELEZO az osszes
+// embeddinget NULL-ra allitani es ujra backfillelni. Lasd a cosineSimilarity
+// hosszellenorzeset is.
 
 export async function generateEmbedding(text: string): Promise<number[] | null> {
   try {
@@ -3626,6 +3639,13 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
+  // Kulonbozo hosszu vektorok osszehasonlitasa NEM ertelmes, es a naiv ciklus
+  // (a.length-ig indexelve) ilyenkor `undefined`-ot szoroz -> NaN, ami a
+  // rendezesben csendben tonkreteszi a rangsort ahelyett, hogy hibat dobna.
+  // Ez pontosan a modellvaltas utani vegyes allapotban fordulhat elo (768 dim
+  // regi vektor egy 1024 dim uj lekerdezes mellett). Ilyenkor 0 a helyes
+  // valasz: "nem hasonlo", nem pedig egy hasznalhatatlan szam.
+  if (a.length !== b.length) return 0
   let dotProduct = 0, normA = 0, normB = 0
   for (let i = 0; i < a.length; i++) {
     dotProduct += a[i] * b[i]

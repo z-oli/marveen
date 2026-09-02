@@ -17,6 +17,10 @@ Registration (user-level ~/.claude/settings.json, post-install step):
   This means the hook can be registered before merge without causing errors
   on other branches where the file does not yet exist.
 """
+# A gepen a rendszer python3 3.9 lehet, ami a `X | None` annotaciot futasidoben
+# nem ismeri -- ezzel a sorral az annotaciok lusták lesznek, es 3.9-en is elindul.
+from __future__ import annotations
+
 import sys
 import os
 import re
