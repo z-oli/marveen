@@ -2683,9 +2683,18 @@ export function markPendingTaskRetryAlert(taskName: string, agentName: string, t
     .run(ts, taskName, agentName).changes > 0
 }
 
-// --- Vector Search (Ollama + nomic-embed-text) ---
+// --- Vector Search (Ollama + bge-m3) ---
 
-const EMBED_MODEL = 'nomic-embed-text'
+// 2026-08-17: nomic-embed-text -> bge-m3. A nomic angol-kozpontu, 768 dimenzios;
+// magyar lekerdezesekre merve gyenge volt (a "nema hiba, nullat ad hibauzenet
+// nelkul" kerdesre nem a pontosan errol szolo emlek jott elsonek). A bge-m3
+// kifejezetten tobbnyelvu, 1024 dimenzios.
+//
+// A MODELL CSERE NEM ONMAGABAN ALL: a ket modell dimenzioja kulonbozik, tehat a
+// tarolt vektorok NEM osszehasonlithatok az ujakkal. Modellvaltas utan KOTELEZO
+// az osszes embeddinget NULL-ra allitani es ujra backfillelni, kulonben vegyes
+// allapot marad. Lasd a cosineSimilarity hosszellenorzeset is.
+const EMBED_MODEL = 'bge-m3'
 
 export async function generateEmbedding(text: string): Promise<number[] | null> {
   try {
@@ -2707,6 +2716,13 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
+  // Kulonbozo hosszu vektorok osszehasonlitasa NEM ertelmes, es a naiv ciklus
+  // (a.length-ig indexelve) ilyenkor `undefined`-ot szoroz -> NaN, ami a
+  // rendezesben csendben tonkreteszi a rangsort ahelyett, hogy hibat dobna.
+  // Ez pontosan a modellvaltas utani vegyes allapotban fordulhat elo (768 dim
+  // regi vektor egy 1024 dim uj lekerdezes mellett). Ilyenkor 0 a helyes
+  // valasz: "nem hasonlo", nem pedig egy hasznalhatatlan szam.
+  if (a.length !== b.length) return 0
   let dotProduct = 0, normA = 0, normB = 0
   for (let i = 0; i < a.length; i++) {
     dotProduct += a[i] * b[i]
