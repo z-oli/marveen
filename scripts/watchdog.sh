@@ -107,6 +107,22 @@ fi
 
 # Replays delivered-but-not-completed messages from the last 2 hours into
 # a freshly restarted agent session. Called after a confirmed restart.
+#
+# *** DO NOT ENABLE THIS WITHOUT FIXING THE FILTER FIRST (measured 2026-09-07). ***
+# watchdog-replay.py selects `status='delivered' AND completed_at IS NULL` and
+# calls that "unfinished". It is not: NO code path marks a delivered inter-agent
+# message complete any more. Measured on the live DB: 457 delivered rows, all 457
+# with completed_at NULL; the only 55 `done` rows are from a retired path and stop
+# on 2026-08-27. So the predicate is true for EVERY delivered message, and a
+# restart would re-inject every message from the last 2 hours (28 at the time of
+# measuring), not the unfinished ones.
+#
+# Until 2026-09-07 this was masked: the request below asked for `?to=`, the API
+# answered 400, and the replay died on the error object before reaching this
+# logic. Fixing the parameter made the path REACHABLE, not correct. This script
+# is currently dormant (no launchd job and no caller references it), which is why
+# the fix was left at "reachable + honest" instead of inventing a completion
+# protocol nobody asked for.
 replay_unfinished_messages() {
   local AGENT_ID="$1"
   local SESSION_NAME="$2"
@@ -137,6 +153,11 @@ replay_unfinished_messages() {
   fi
 
   [ -z "$RESPONSE" ] || [ "$RESPONSE" = "[]" ] && return
+  case "$RESPONSE" in
+    \[*) ;;
+    *) echo "$(timestamp) [watchdog] message list not a JSON array, skipping replay: ${RESPONSE:0:120}" >> "$LOG"
+       return ;;
+  esac
 
   TMPDATA=$(mktemp)
   echo "$RESPONSE" > "$TMPDATA"
