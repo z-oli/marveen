@@ -42,6 +42,17 @@ ALWAYS_SKIP = (".git", "__pycache__", "node_modules")
 WATCHED = [
     ("skill", HOME, ".claude/skills", (".md", ".py", ".sh", ".mjs", ".js")),
     ("subagent", HOME, ".claude/agents", (".md",)),
+    # 2026-09-07: a 09-05-i Marveen-frissites athelyezte a sub-agens fajlokat a
+    # HOME/.claude/agents-bol a projekt sajat .claude/agents mappajaba. A HOME-os sor
+    # marad (ha egy kesobbi frissites visszateszi oket, az igy kiderul), de a FOAGENS
+    # altal TENYLEGESEN betoltott peldanyt eddig SEMMI nem figyelte: a ket sub-agens
+    # masolatat az "instructions" hatokor fedi (agents/<nev>/), a repo gyokerebeli
+    # .claude/agents-et viszont egyik sem. Merve: a --check "ELTUNT"-et irt egy fajlra,
+    # ami valojaban megvolt, csak masutt, es a valodi peldany figyeletlenul allt.
+    # A LABEL SZANDEKOSAN MAS, mint a HOME-os sore: a kulcs "label:relpath(base)" alakú,
+    # tehat azonos labellel a ket hatokor UGYANAZT a kulcsot adna, es nemán elfednek
+    # egymast (a dict az utolsot tartana meg).
+    ("subagent-repo", REPO_ROOT, ".claude/agents", (".md",)),
     ("scheduled-task", HOME, ".claude/scheduled-tasks", (".md", ".json")),
     ("hook", REPO_ROOT, "scripts/hooks", (".mjs", ".py", ".sh")),
     ("guard", REPO_ROOT, "scripts/liveness-watchdog.sh", None),

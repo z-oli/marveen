@@ -86,6 +86,12 @@ if [ "$MERGED" = "1" ] && [ -d "$AGENT_SKILLS_DIR" ]; then
 fi
 
 echo "" >> "$OUTPUT"
-echo "_${SKILL_COUNT} skill indexelve. Generálva: $(date '+%Y-%m-%d %H:%M')_" >> "$OUTPUT"
+# Szandekosan NINCS idobelyeg a kimenetben. Az index az utasitas-felulet resze
+# (integrity-manifest.py figyeli), es egy minden futasnal valtozo timestamp miatt
+# a jegyzek MINDIG "MÓDOSULT"-at jelezne valodi tartalmi valtozas nelkul is.
+# Ez zajos csapdat csinal belole: hozzaszoksz, hogy vakon elfogadod, es pont akkor
+# nem nezed meg, amikor tenyleg valtozott valami. Igy a hash csak akkor mozdul,
+# ha a skill-keszlet tenylegesen valtozott.
+echo "_${SKILL_COUNT} skill indexelve._" >> "$OUTPUT"
 
 echo "Skill index generated: $OUTPUT ($SKILL_COUNT skills)"

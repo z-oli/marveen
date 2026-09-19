@@ -38,6 +38,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STORE="$REPO_ROOT/store"
 STATE="$STORE/.liveness-state"
 BTIME_STATE="$STORE/.last-btime"
+# Which boot we have ALREADY told the owner about. Separate from the baseline
+# above on purpose: the baseline tracks what we last SAW, this tracks what we
+# last SAID. Deduplicating on identity instead of on age is what lets an old
+# boot still be news (see the block below).
+BTIME_REPORTED="$STORE/.last-btime-reported"
 LOG="$STORE/liveness-watchdog.log"
 TG_ENV="${TELEGRAM_ENV:-$HOME/.claude/channels/telegram/.env}"
 
@@ -82,30 +87,57 @@ if [[ -n "$btime" ]]; then
   [[ -f "$BTIME_STATE" ]] && prev_btime="$(tr -dc '0-9' <"$BTIME_STATE" 2>/dev/null)"
   if [[ -z "$prev_btime" ]]; then
     echo "$btime" >"$BTIME_STATE" 2>/dev/null || true
+    # Seed the reported marker too: on a genuine first run this boot predates
+    # the watchdog, so announcing it would be noise, not news.
+    echo "$btime" >"$BTIME_REPORTED" 2>/dev/null || true
     log "btime baseline initialised ($btime); no alert on first run"
   else
     drift=$(( btime > prev_btime ? btime - prev_btime : prev_btime - btime ))
-    # TWO guards, both learned the hard way on 2026-08-16, when this block sent
-    # the owner two "the machine rebooted" messages about a reboot that had
-    # happened NINETEEN HOURS earlier:
-    #
-    # 1. kern.boottime is not a constant. The kernel keeps refining it against
-    #    NTP, so the seconds field jitters by a second or so (07:37:06 vs
-    #    07:37:07). An exact != comparison reads every jitter as a fresh boot,
-    #    which is an alert loop, not a watchdog. A real reboot moves btime by
-    #    minutes at least, so anything under a minute is noise.
-    # 2. Even a genuine change is only worth reporting while it is NEWS. This
-    #    job runs every ten minutes, so a real reboot is caught within ten
-    #    minutes; a "boot" that is hours old means the state file was lost or
-    #    the clock moved, not that the machine just came back.
+    # Guard 1, learned on 2026-08-16 when this block sent the owner two "the
+    # machine rebooted" messages about the same reboot: kern.boottime is not a
+    # constant. The kernel keeps refining it against NTP, so the seconds field
+    # jitters (07:37:06 vs 07:37:07). An exact != comparison reads every jitter
+    # as a fresh boot, which is an alert loop, not a watchdog. A real reboot
+    # moves btime by minutes at least, so anything under a minute is noise.
     if (( drift > 60 )); then
       echo "$btime" >"$BTIME_STATE" 2>/dev/null || true
       boot_age_min=$(( (now - btime) / 60 ))
       boot_txt="$(date -r "$btime" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "@$btime")"
-      if (( boot_age_min <= 30 )); then
-        notify "A gép újraindult ${boot_txt}-kor, ${boot_age_min} perce. Host szintű restart, nem alkalmazás-hiba. Most nézem, hogy minden visszajött-e."
+
+      # Guard 2 USED TO BE an age test: report only if the boot is under 30
+      # minutes old, on the reasoning that this job runs every ten minutes, so
+      # anything older must be a lost state file rather than a real reboot.
+      #
+      # That reasoning was WRONG, and it cost us the 2026-08-17 20:22 reboot:
+      # nothing was sent, the log just said "the boot is 681m old; no alert".
+      # The premise assumes this job is always running. It is not. A LaunchAgent
+      # loads at user LOGIN. When the Mac comes back from a power cut at night
+      # and nobody logs in until morning, the watchdog's FIRST run of the day
+      # always sees an hours-old boot -- so the age test guaranteed silence in
+      # precisely the unattended case the watchdog exists for.
+      #
+      # Deduplicate on the identity of the boot instead: alert once per distinct
+      # btime, however old, and put the age in the message so the owner can tell
+      # "just now" from "overnight". That still cannot repeat itself for one
+      # boot, which is all guard 2 was ever meant to prevent.
+      prev_reported=""
+      [[ -f "$BTIME_REPORTED" ]] && prev_reported="$(tr -dc '0-9' <"$BTIME_REPORTED" 2>/dev/null)"
+      rep_drift=0
+      if [[ -n "$prev_reported" ]]; then
+        rep_drift=$(( btime > prev_reported ? btime - prev_reported : prev_reported - btime ))
+      fi
+      if [[ -z "$prev_reported" ]] || (( rep_drift > 60 )); then
+        if (( boot_age_min <= 30 )); then
+          age_txt="${boot_age_min} perce"
+          tail_txt="Most nézem, hogy minden visszajött-e."
+        else
+          age_txt="$(( boot_age_min / 60 )) órája"
+          tail_txt="Ennyivel ezelőtt jött vissza a gép, tehát felügyelet nélkül indult újra, és ami közben esedékes volt (mentés, ütemezett feladatok), az kimaradhatott. Most nézem, hogy minden visszajött-e."
+        fi
+        notify "A gép újraindult ${boot_txt}-kor, ${age_txt}. Host szintű restart, nem alkalmazás-hiba. ${tail_txt}"
+        echo "$btime" >"$BTIME_REPORTED" 2>/dev/null || true
       else
-        log "btime moved by ${drift}s but the boot is ${boot_age_min}m old; baseline updated, no alert"
+        log "btime moved by ${drift}s but this boot (${boot_txt}) was already reported; no duplicate alert"
       fi
     fi
   fi
