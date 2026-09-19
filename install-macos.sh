@@ -34,6 +34,175 @@ WEB_PORT="${WEB_PORT:-3420}"
 
 INSTALL_STEP="init"
 
+# --- INSTWIZ1 headless-install helpers (contract) BEGIN ---
+# Non-interactive mode: MARVEEN_NONINTERACTIVE=1 skips EVERY stdin prompt and
+# takes the value from a MARVEEN_* preset env var (when one is defined for the
+# prompt) or from the documented default -- no `read` may ever touch stdin in
+# this mode (a bare read would EOF-abort a curl|ssh bootstrap).
+# Machine progress: MARVEEN_JSON_PROGRESS=1 emits one
+#   MARVEEN_PROGRESS {"step":"<id>","status":"start|ok|fail","detail":"..."}
+# line per step transition on stdout, and exactly one closing
+#   MARVEEN_RESULT {"ok":...,"dashboardPort":...,"enrollBundle":...}
+# line at the end (success AND failure paths -- fail()/ERR trap/EXIT trap).
+# Secrets (tokens, passwords, dashboard-token URLs) must NEVER appear in a
+# MARVEEN_PROGRESS line; emit_progress scrubs suspicious detail strings.
+
+# prompt_or_preset VAR "prompt" "noninteractive-default" ["PRESET_ENV"] ["noraw"]
+# Interactive mode is byte-identical to the read -rp / read -p it replaces
+# (any post-read `VAR=${VAR:-default}` line at the call site stays as-is and
+# keeps applying the interactive default).
+prompt_or_preset() {
+  local __var="$1" __prompt="$2" __ni_default="$3" __preset_env="${4:-}" __readmode="${5:-raw}"
+  if [ "${MARVEEN_NONINTERACTIVE:-0}" = "1" ]; then
+    local __val=""
+    if [ -n "$__preset_env" ]; then
+      __val="${!__preset_env:-}"
+    fi
+    if [ -z "$__val" ]; then
+      __val="$__ni_default"
+    fi
+    printf -v "$__var" '%s' "$__val"
+    return 0
+  fi
+  if [ "$__readmode" = "noraw" ]; then
+    read -p "$__prompt" "$__var"
+  else
+    read -rp "$__prompt" "$__var"
+  fi
+}
+
+# Minimal JSON string escaping for progress lines (backslash, double quote;
+# newlines/tabs flattened to spaces, CR dropped).
+json_escape() {
+  local s="$1"
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/ }
+  s=${s//$'\r'/}
+  s=${s//$'\t'/ }
+  printf '%s' "$s"
+}
+
+# Redact anything that even smells like a credential before it can reach a
+# progress/result line. Over-redaction is fine; leaking is not.
+scrub_secretish() {
+  local s="$1"
+  case "$s" in
+    *sk-ant-*|*token=*|*TOKEN=*|*password*|*Password*|*jelszo*) printf '[redacted]' ;;
+    *) printf '%s' "$s" ;;
+  esac
+}
+
+emit_progress() {
+  if [ "${MARVEEN_JSON_PROGRESS:-0}" != "1" ]; then return 0; fi
+  local step="$1" status="$2" detail="${3:-}"
+  detail="$(scrub_secretish "$detail")"
+  if [ -n "$detail" ]; then
+    printf 'MARVEEN_PROGRESS {"step":"%s","status":"%s","detail":"%s"}\n' \
+      "$(json_escape "$step")" "$(json_escape "$status")" "$(json_escape "$detail")"
+  else
+    printf 'MARVEEN_PROGRESS {"step":"%s","status":"%s"}\n' \
+      "$(json_escape "$step")" "$(json_escape "$status")"
+  fi
+}
+
+MARVEEN_RESULT_EMITTED=0
+# emit_result <true|false> [error-message] [enrollBundle]
+# Emits at most ONE MARVEEN_RESULT line per install run (first caller wins).
+emit_result() {
+  if [ "${MARVEEN_JSON_PROGRESS:-0}" != "1" ]; then return 0; fi
+  if [ "$MARVEEN_RESULT_EMITTED" = "1" ]; then return 0; fi
+  MARVEEN_RESULT_EMITTED=1
+  local ok="$1" err="${2:-}" bundle="${3:-}" port="${WEB_PORT:-3420}" bundle_json="null"
+  if ! [[ "$port" =~ ^[0-9]+$ ]]; then port=3420; fi
+  if [ -n "$bundle" ]; then bundle_json="\"$(json_escape "$bundle")\""; fi
+  if [ "$ok" = "true" ]; then
+    printf 'MARVEEN_RESULT {"ok":true,"dashboardPort":%s,"enrollBundle":%s}\n' "$port" "$bundle_json"
+  else
+    err="$(scrub_secretish "$err")"
+    printf 'MARVEEN_RESULT {"ok":false,"dashboardPort":%s,"enrollBundle":%s,"error":"%s"}\n' \
+      "$port" "$bundle_json" "$(json_escape "$err")"
+  fi
+}
+
+# Step transition: close the previous step (ok) and open the new one (start).
+set_step() {
+  if [ -n "${INSTALL_STEP:-}" ] && [ "$INSTALL_STEP" != "init" ] && [ "$INSTALL_STEP" != "$1" ]; then
+    emit_progress "$INSTALL_STEP" ok
+  fi
+  INSTALL_STEP="$1"
+  emit_progress "$INSTALL_STEP" start
+}
+
+# Safety net: any exit path that did not already emit a MARVEEN_RESULT line
+# (e.g. a stray `exit 1` outside fail()/on_error()) still closes the protocol.
+# A successful `exec` (repo re-bootstrap) does not run the EXIT trap, which is
+# correct -- the re-executed installer owns the protocol from there.
+on_exit_emit_result() {
+  local __code=$?
+  if [ "$__code" -ne 0 ]; then
+    emit_result false "installer exited with code ${__code} at step ${INSTALL_STEP:-init}"
+  else
+    # Code 0 but no result yet = an early exit that never reached the normal
+    # completion (e.g. --help, or an aborted MCP prompt that exits 0). The
+    # normal success path emits `true` before returning, so the once-only guard
+    # makes this a no-op there; here it guarantees the machine consumer still
+    # gets exactly one closing MARVEEN_RESULT on every exit path.
+    emit_result false "installer exited early without completing (step ${INSTALL_STEP:-init})"
+  fi
+}
+trap on_exit_emit_result EXIT
+# --- INSTWIZ1 headless-install helpers (contract) END ---
+
+# --- INSTWIZ1 headless sudo (macOS, MACHEADLESS805) BEGIN ---
+# Headless terminal env: the baseline's `clear` (banner) hard-fails both with
+# NO TERM (raw exec channel: "TERM environment variable not set", probe 1) and
+# with TERM=dumb (what the macOS login profile sets under `bash -lc` on a
+# non-TTY -- measured on marveen2, probe 2: guard on -z alone did not fire and
+# clear still exited 1). Cover both breaking states. The linux BASELINE
+# carries its own TERM fallback; the mac baseline does not, so the headless
+# variant supplies it here. TERM is not a secret -- exporting is fine.
+case "${TERM:-}" in ''|dumb) export TERM=xterm-256color;; esac
+# On a REMOTE macOS install there is no TTY, so a plain `sudo` inside this
+# script cannot read a password ("sudo: a terminal is required"), and the
+# pre-flight sudo prime's timestamp does NOT carry to these child calls
+# (measured 2026-08-05: the timestamp is tty/session-scoped and a fresh sudo
+# still fails). So every privileged call must be handed the password directly.
+#
+# SECRET HANDLING (the four hygiene gates apply to this new path too):
+#   - the password is read ONCE from stdin into a shell variable and NEVER
+#     written to a file, NEVER placed in argv, NEVER exported (so it cannot
+#     appear in /proc/<pid>/environ or a child's environment), and `set +x`
+#     keeps it out of any trace/log;
+#   - run_priv feeds it to `sudo -S` on stdin. sudo -S reads ONLY the first
+#     stdin line as the password; the command it runs inherits the REST of
+#     stdin. That single fact makes ONE helper cover both plain calls and
+#     `producer | sudo cmd` pipes without the password ever reaching the
+#     command (proven with a stub before this was written).
+#
+# The read happens here, at the top of the headless helpers, before anything
+# else consumes stdin. Only in noninteractive mode (a real remote install);
+# an interactive run of this script has a TTY and run_priv falls back to a
+# plain sudo.
+set +x
+if [ "${MARVEEN_NONINTERACTIVE:-0}" = "1" ]; then
+  IFS= read -r __MARVEEN_SUDO_PW || __MARVEEN_SUDO_PW=""
+fi
+
+run_priv() {
+  if [ -n "${__MARVEEN_SUDO_PW:-}" ]; then
+    # Password on the FIRST stdin line (consumed by sudo -S -p ''), the command
+    # inherits whatever follows on stdin (the data of a `producer | run_priv cmd`
+    # pipe). For a plain `run_priv cmd` the trailing `cat` reads EOF and the
+    # command gets no extra input.
+    { printf '%s\n' "$__MARVEEN_SUDO_PW"; cat; } | sudo -S -p '' "$@"
+  else
+    # No captured password (interactive run with a TTY): behave like plain sudo.
+    sudo "$@"
+  fi
+}
+# --- INSTWIZ1 headless sudo (macOS, MACHEADLESS805) END ---
+
 # shellcheck source=install-lang.sh
 source "$(dirname "$0")/install-lang.sh"
 
@@ -67,7 +236,7 @@ offer_claude_fallback() {
   echo -e "${ORANGE}$(_t macos.claude_available)${NC}"
   local prompt="Marveen installer failed at step \"${step}\". Error: ${err_msg}. Script: install.sh${line_info}. Repo: https://github.com/Szotasz/marveen. OS: macOS $(sw_vers -productVersion 2>/dev/null || echo unknown). Node: $(node -v 2>/dev/null || echo missing). Dir: ${INSTALL_DIR}. Your task: diagnose this Marveen installer failure. The install scripts are install.sh (macOS) and install-linux.sh. Read the relevant section, check for missing dependencies or permission issues, and suggest concrete shell commands to fix."
   if [ -t 0 ]; then
-    read -rp "$(_t prompt_open_claude)" OPEN_CLAUDE
+    prompt_or_preset OPEN_CLAUDE "$(_t prompt_open_claude)" "n"
     OPEN_CLAUDE=${OPEN_CLAUDE:-n}
     if [[ "$OPEN_CLAUDE" == "i" || "$OPEN_CLAUDE" == "y" ]]; then
       # `claude` takes the initial prompt as a POSITIONAL argument. The old
@@ -84,6 +253,8 @@ offer_claude_fallback() {
 fail() {
   echo -e "  ${RED}✗${NC} $*"
   explain_install_error "${INSTALL_ERRLOG:-}"
+  emit_progress "$INSTALL_STEP" fail "$*"
+  emit_result false "step ${INSTALL_STEP}: $*"
   offer_claude_fallback "$INSTALL_STEP" "$*" "${BASH_LINENO[0]}"
   exit 1
 }
@@ -92,6 +263,8 @@ on_error() {
   echo ""
   echo -e "${RED}Varatlan hiba a(z) '${INSTALL_STEP}' lepesben (sor: $1).${NC}"
   explain_install_error "${INSTALL_ERRLOG:-}"
+  emit_progress "$INSTALL_STEP" fail "Unexpected error at line $1"
+  emit_result false "unexpected error at line $1 (step ${INSTALL_STEP})"
   offer_claude_fallback "$INSTALL_STEP" "Unexpected error at line $1" "$1"
   exit 1
 }
@@ -115,7 +288,7 @@ fi
 echo ""
 
 # Step 1: Check prerequisites
-INSTALL_STEP="prerequisites"
+set_step "prerequisites"
 echo -e "${BOLD}$(_t section_1)${NC}"
 
 # ── macOS verzio pre-flight (MACOSOLD1) ──────────────────────────────
@@ -161,7 +334,7 @@ elif macos_version_lt "$MACOS_VER" "$BREW_OLDEST_SUPPORTED"; then
   # felhasznalo dont.
   warn "$(_t macos.ver_unsupported_head) ${MACOS_VER}"
   echo -e "  $(_t macos.ver_unsupported_body)"
-  read -rp "$(_t macos.ver_unsupported_prompt)" CONT_OLD_MACOS
+  prompt_or_preset CONT_OLD_MACOS "$(_t macos.ver_unsupported_prompt)" "n" "MARVEEN_CONTINUE_UNSUPPORTED_MACOS"
   CONT_OLD_MACOS=${CONT_OLD_MACOS:-i}
   # hu prompt: i/n, en prompt: y/n -- mindket igen-alak elfogadva.
   case "$CONT_OLD_MACOS" in
@@ -215,7 +388,15 @@ if [ "$MISSING" -eq 1 ]; then
   echo -e "${ORANGE}$(_t macos.install_missing_deps)${NC}"
   if ! command -v brew &>/dev/null; then
     echo -e "${ORANGE}$(_t macos.installing_homebrew)${NC}"
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # MACHEADLESS805: the official Homebrew installer demands TTY-sudo, so the
+    # headless variant does its two privileged steps via run_priv and installs
+    # brew by the documented git route (arm64 prefix = the brew repo itself).
+    if [ "$(uname -m)" != "arm64" ]; then
+      fail "A tavoli telepito a Homebrew-t csak Apple Silicon gepen tudja telepiteni. Telepitsd a Homebrew-t kezzel (https://brew.sh), majd inditsd ujra a telepitest."
+    fi
+    run_priv mkdir -p /opt/homebrew
+    run_priv chown -R "$(whoami):admin" /opt/homebrew
+    git clone https://github.com/Homebrew/brew /opt/homebrew
     # Homebrew on Apple Silicon installs to /opt/homebrew; add it to PATH now
     # so subsequent `brew` calls in this script succeed without a shell restart.
     if [ -x /opt/homebrew/bin/brew ]; then
@@ -253,7 +434,7 @@ echo ""
 if ! command -v claude &>/dev/null; then
   echo -e "  ${RED}✗${NC} $(_t macos.claude_missing)"
   echo -e "${ORANGE}$(_t macos.install_claude_hint)${NC}"
-  read -rp "$(_t prompt_install_claude)" INSTALL_CLAUDE
+  prompt_or_preset INSTALL_CLAUDE "$(_t prompt_install_claude)" "i"
   if [[ "$INSTALL_CLAUDE" == "i" || "$INSTALL_CLAUDE" == "y" ]]; then
     # NPMPERM1: hivatalos nodejs.org .pkg-s (vagy Intel) gepen a globalis
     # node_modules root-tulajdonu -- EACCES-szel halna. Pre-flight + kiut.
@@ -261,7 +442,7 @@ if ! command -v claude &>/dev/null; then
       fail "$(_t npm.aborted)"
     fi
     if [ "${NPM_NEEDS_SUDO:-}" = "1" ]; then
-      sudo npm install -g @anthropic-ai/claude-code
+      run_priv npm install -g @anthropic-ai/claude-code
     else
       npm install -g @anthropic-ai/claude-code
     fi
@@ -275,7 +456,7 @@ if ! command -v claude &>/dev/null; then
 fi
 echo -e "  ${GREEN}✓${NC} Claude Code CLI"
 
-INSTALL_STEP="claude-setup"
+set_step "claude-setup"
 # Step 2: Claude Code first-run flags (BEFORE auth login)
 #
 # Reason: ha a `claude auth login` browser-flow megakad (timeout, Ctrl+C,
@@ -322,14 +503,14 @@ except Exception:
 PYEOF
 echo -e "  ${GREEN}✓${NC} Claude Code first-run flags pre-set"
 
-INSTALL_STEP="claude-auth"
+set_step "claude-auth"
 # Step 2b: Claude authentication (kept tolerant -- ha megakad, folytatjuk)
 echo ""
 echo -e "${BOLD}$(_t section_2_macos)${NC}"
 echo -e "${DIM}$(_t macos.auth_hint_1)${NC}"
 echo -e "${DIM}$(_t macos.auth_hint_2)${NC}"
 echo -e "${DIM}$(_t macos.auth_hint_3)${NC}"
-read -rp "$(_t prompt_login)" DO_AUTH
+prompt_or_preset DO_AUTH "$(_t prompt_login)" "n" "MARVEEN_MACOS_DO_AUTH"
 if [[ "$DO_AUTH" == "i" || "$DO_AUTH" == "y" ]]; then
   # `&& ... || ...` rather than a `set +e` window: a `trap ... ERR` fires
   # regardless of the errexit setting, and on_error() above EXITS, so a window
@@ -358,7 +539,7 @@ else
   echo -e "  ${DIM}a hatterszolgaltatasok ahhoz nem ferenek hozza.${NC}"
   echo -e "  ${BOLD}1.${NC} Futtasd egy terminalban: ${BLUE}claude setup-token${NC}"
   echo -e "  ${BOLD}2.${NC} Masold ide a kiirt tokent (Enter = kihagyas):"
-  read -rp "  OAuth token: " MACOS_OAUTH_TOKEN_INPUT
+  prompt_or_preset MACOS_OAUTH_TOKEN_INPUT "  OAuth token: " "" "MARVEEN_OAUTH_TOKEN"
   if [ -n "$MACOS_OAUTH_TOKEN_INPUT" ]; then
     if printf '%s' "$MACOS_OAUTH_TOKEN_INPUT" | grep -Eq '^sk-ant-oat01-[A-Za-z0-9_-]{40,}$'; then
       ok "Token formailag rendben, elmentjuk a szolgaltatasoknak"
@@ -396,16 +577,16 @@ else
   echo -e "    ${DIM}Javitas: \`claude --version\` -> \`claude /login\` (vagy ANTHROPIC_API_KEY/CLAUDE_CODE_OAUTH_TOKEN beallitas) -> \`claude --print \"ping\"\` ujra.${NC}"
 fi
 
-INSTALL_STEP="personal-info"
+set_step "personal-info"
 # Step 3: Personal info
 echo ""
 echo -e "${BOLD}$(_t section_3_macos)${NC}"
-read -rp "$(_t prompt_your_name)" OWNER_NAME
+prompt_or_preset OWNER_NAME "$(_t prompt_your_name)" "Owner" "MARVEEN_OWNER_NAME"
 # Chat ID is NOT asked here -- the user doesn't know it yet.
 # It will be set automatically during the Telegram pairing flow.
 CHAT_ID="0"
 
-INSTALL_STEP="channel-setup"
+set_step "channel-setup"
 # Step 4: Channel provider setup
 echo ""
 echo -e "${BOLD}$(_t section_4_macos)${NC}"
@@ -414,7 +595,7 @@ echo -e "  ${BOLD}1.${NC} $(_t macos.channel_option_1)"
 echo -e "  ${BOLD}2.${NC} Slack"
 echo -e "  ${BOLD}3.${NC} Discord"
 echo ""
-read -rp "$(_t prompt_channel_select_macos)" PROVIDER_CHOICE
+prompt_or_preset PROVIDER_CHOICE "$(_t prompt_channel_select_macos)" "1" "MARVEEN_PROVIDER"
 PROVIDER_CHOICE=${PROVIDER_CHOICE:-1}
 if [ "$PROVIDER_CHOICE" = "2" ]; then
   CHANNEL_PROVIDER="slack"
@@ -477,7 +658,7 @@ if [ "$CHANNEL_PROVIDER" = "telegram" ]; then
   echo -e "${DIM}  3. Adj nevet a botodnak${NC}"
   echo -e "${DIM}  4. Masold ide a kapott tokent:${NC}"
   echo ""
-  read -rp "$(_t prompt_telegram_token)" BOT_TOKEN
+  prompt_or_preset BOT_TOKEN "$(_t prompt_telegram_token)" "" "MARVEEN_BOT_TOKEN"
   probe_telegram_token "$BOT_TOKEN"
 elif [ "$CHANNEL_PROVIDER" = "discord" ]; then
   echo ""
@@ -565,8 +746,8 @@ else
   echo -e "${DIM}     app_mention, message.channels, message.groups, message.im${NC}"
   echo -e "${DIM}  5. Installald a workspace-be${NC}"
   echo ""
-  read -rp "$(_t prompt_slack_bot_token)" SLACK_BOT_TOKEN
-  read -rp "$(_t prompt_slack_app_token)" SLACK_APP_TOKEN
+  prompt_or_preset SLACK_BOT_TOKEN "$(_t prompt_slack_bot_token)" "" "MARVEEN_SLACK_BOT_TOKEN"
+  prompt_or_preset SLACK_APP_TOKEN "$(_t prompt_slack_app_token)" "" "MARVEEN_SLACK_APP_TOKEN"
 
   # Managed settings: Claude Code requires allowedChannelPlugins at system level
   MANAGED_DIR="/Library/Application Support/ClaudeCode"
@@ -583,7 +764,7 @@ else
     # the Teams bot is silently dropped (online but never replies). This is the
     # per-customer sudo-elimination: the installer (already sudo) allows teams
     # at install time, so no manual managed-settings edit is needed later.
-    HAS_ALL=$(sudo python3 -c "
+    HAS_ALL=$(run_priv python3 -c "
 import json, sys
 required = [('slack-channel','marveen-marketplace'),('telegram','claude-plugins-official'),('teams','marveen-marketplace'),('discord','claude-plugins-official')]
 try:
@@ -595,6 +776,9 @@ except: sys.exit(1)
 " 2>/dev/null && echo "yes" || echo "no")
     if [ "$HAS_ALL" = "no" ]; then
       echo -e "  ${ORANGE}⚠${NC} $(_t macos.managed_update)"
+      # A sudo helyett run_priv (2026-09-23 rebase): ugyanez a biztonsagos logika,
+      # de a fej nelkuli telepitesben is mukodik (elkapott jelszo), interaktivan
+      # pedig sima sudo. A `tee` alaku regi valtozat TRUNKALT hibanal, ezert nem az maradt.
       # Safe JSON merge (same shape as the Discord branch / #1306): tmp file +
       # copymode + os.replace, so no interruption can leave a truncated
       # managed-settings behind. And an org-policy file is NEVER rebuilt from
@@ -603,7 +787,7 @@ except: sys.exit(1)
       # (channelsEnabled, other allowlists) host-wide. The old shape also
       # piped through `sudo tee`, which TRUNCATES the file even when the merge
       # process fails -- a failed merge left an EMPTY org-policy file behind.
-      if sudo python3 - "$MANAGED_FILE" <<'SLACKMERGEPY'
+      if run_priv python3 - "$MANAGED_FILE" <<'SLACKMERGEPY'
 import json, os, shutil, sys
 p = sys.argv[1]
 required = [
@@ -643,11 +827,14 @@ SLACKMERGEPY
     fi
   else
     echo -e "  ${ORANGE}⚠${NC} $(_t macos.managed_create)"
-    sudo mkdir -p "$MANAGED_DIR"
+      # A sudo helyett run_priv (2026-09-23 rebase): ugyanez a biztonsagos logika,
+      # de a fej nelkuli telepitesben is mukodik (elkapott jelszo), interaktivan
+      # pedig sima sudo. A `tee` alaku regi valtozat TRUNKALT hibanal, ezert nem az maradt.
+    run_priv mkdir -p "$MANAGED_DIR"
     # Fresh file: still tmp + os.replace, so an interrupted install can never
     # leave a truncated/empty org-policy file that a later run would then
     # refuse to touch (the merge above declines unparseable files by design).
-    if sudo python3 - "$MANAGED_FILE" <<'SLACKCREATEPY'
+    if run_priv python3 - "$MANAGED_FILE" <<'SLACKCREATEPY'
 import json, os, sys
 p = sys.argv[1]
 required = [
@@ -697,7 +884,7 @@ if [ -f "$INSTALL_DIR/scripts/ensure-managed-channels-enabled.sh" ]; then
   esac
 fi
 
-read -rp "$(_t prompt_bot_name)" BOT_NAME
+prompt_or_preset BOT_NAME "$(_t prompt_bot_name)" "Marveen" "MARVEEN_BOT_NAME"
 BOT_NAME=${BOT_NAME:-"Marveen"}
 
 # Derive the ASCII slug the backend uses everywhere (tmux sessions, plist
@@ -768,7 +955,7 @@ resolve_service_node() {
 }
 
 # Step 5: Install dependencies
-INSTALL_STEP="npm-install"
+set_step "npm-install"
 echo ""
 echo -e "${BOLD}$(_t section_5)${NC}"
 cd "$INSTALL_DIR"
@@ -784,7 +971,7 @@ fi
 ok "$(_t macos.npm_done)"
 
 # Build TypeScript
-INSTALL_STEP="typescript-build"
+set_step "typescript-build"
 echo -e "$(_t macos.building)"
 if ! npm run build --loglevel warn; then
   fail "TypeScript forditas sikertelen. Ellenorizd a hibauzeneteket fentebb."
@@ -804,7 +991,7 @@ if [ -d "$INSTALL_DIR/dist" ]; then
   [ -n "$_built_commit" ] && printf '%s\n' "$_built_commit" > "$INSTALL_DIR/dist/.built-commit"
 fi
 
-INSTALL_STEP="configuration"
+set_step "configuration"
 # Step 6: Configuration
 echo ""
 echo -e "${BOLD}$(_t section_6_macos)${NC}"
@@ -1311,7 +1498,7 @@ if ! command -v ffmpeg &>/dev/null; then
 fi
 echo -e "$(_t macos.ffmpeg_done)"
 
-INSTALL_STEP="bumblebee"
+set_step "bumblebee"
 # Go + bumblebee (supply-chain scanner)
 echo ""
 echo -e "  Go + bumblebee (supply-chain scanner)..."
@@ -1368,7 +1555,7 @@ else
   echo -e "  ${DIM}  Kezzel: brew install go && git clone https://github.com/perplexityai/bumblebee /tmp/bb && (cd /tmp/bb && go build -o ~/.local/bin/bumblebee ./cmd/bumblebee)${NC}"
 fi
 
-INSTALL_STEP="launchagent"
+set_step "launchagent"
 # Step 7: LaunchAgent setup
 echo ""
 echo -e "${BOLD}$(_t section_7)${NC}"
@@ -1566,7 +1753,7 @@ if [ "$CHANNEL_PROVIDER" = "telegram" ] && [ -n "$BOT_TOKEN" ]; then
   echo -e "  ${BOLD}2.${NC} A bot kuld neked egy parosito kodot"
   echo -e "  ${BOLD}3.${NC} Masold ide a kapott kodot:"
   echo ""
-  read -rp "$(_t prompt_pair_code)" PAIR_CODE
+  prompt_or_preset PAIR_CODE "$(_t prompt_pair_code)" ""
   if [ -n "$PAIR_CODE" ]; then
     ACCESS_FILE="$CHANNEL_DIR/access.json"
     if [ -f "$ACCESS_FILE" ]; then
@@ -1617,7 +1804,7 @@ fi
 echo ""
 echo -e "${BOLD}$(_t macos.migration_title)${NC}"
 echo -e "${DIM}$(_t macos.migration_hint)${NC}"
-read -rp "$(_t prompt_migrate)" DO_MIGRATE
+prompt_or_preset DO_MIGRATE "$(_t prompt_migrate)" "n"
 DO_MIGRATE=${DO_MIGRATE:-n}
 if [ "$DO_MIGRATE" = "i" ]; then
   if [ -f "$INSTALL_DIR/scripts/migrate.sh" ]; then
@@ -1641,6 +1828,40 @@ if [ "$CHANNEL_PROVIDER" = "telegram" ] && [ "$CHAT_ID" = "0" ]; then
   echo -e "  2. Masold a kapott parosito kodot"
   echo -e "  3. Futtasd: ${BOLD}claude${NC}, majd ${BOLD}/telegram:access pair AKOD${NC}"
   echo -e "${ORANGE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+fi
+
+# ─────────────────────────────────────────────
+# Auto-enroll (Bridge headless provisioning) -- INSTWIZ1 contract point 3
+# ─────────────────────────────────────────────
+# When MARVEEN_ENROLL_PUBKEY is set, enroll that SSH public key via the
+# existing remote-enroll flow and surface the base64 connection bundle in the
+# MARVEEN_RESULT line. remote-access-enroll.ts prints the bundle between
+# "----- BEGIN/END CONNECTION BUNDLE -----" marker lines on stdout; all
+# diagnostics go to stderr (captured to store/enroll.stderr.log). The bundle
+# is a secret by design (it may carry the dashboard token) -- it goes ONLY
+# into the MARVEEN_RESULT enrollBundle field, never into a progress line.
+ENROLL_BUNDLE=""
+if [ -n "${MARVEEN_ENROLL_PUBKEY:-}" ]; then
+  set_step "enroll"
+  echo ""
+  echo -e "${BOLD}Remote eszkoz enroll (Bridge)${NC}"
+  ENROLL_OUT="$(cd "$INSTALL_DIR" && npm run --silent remote-enroll -- "$MARVEEN_ENROLL_PUBKEY" 2>"$INSTALL_DIR/store/enroll.stderr.log")" || ENROLL_OUT=""
+  ENROLL_BUNDLE="$(printf '%s\n' "$ENROLL_OUT" | awk '/^----- BEGIN CONNECTION BUNDLE -----$/{f=1;next} /^----- END CONNECTION BUNDLE -----$/{f=0} f{printf "%s",$0}')"
+  if [ -n "$ENROLL_BUNDLE" ]; then
+    ok "Remote enroll kesz (connection bundle generalva)"
+  else
+    warn "Remote enroll sikertelen -- reszletek: $INSTALL_DIR/store/enroll.stderr.log"
+    emit_progress "enroll" fail "remote-enroll produced no bundle"
+    # The install itself completed, but the caller asked for an enroll bundle
+    # and did not get one -- report failure so the Bridge can offer a retry
+    # instead of silently proceeding without a way to connect. EXIT here so the
+    # run does not fall through to the success banner and a trailing
+    # `emit_progress "$INSTALL_STEP" ok` that would repaint the failed enroll
+    # step green (the MARVEEN_RESULT is already false and the once-only guard
+    # keeps it authoritative).
+    emit_result false "remote-enroll failed: MARVEEN_ENROLL_PUBKEY was set but no connection bundle was produced (see store/enroll.stderr.log on the host)"
+    exit 1
+  fi
 fi
 
 # Done!
@@ -1692,3 +1913,8 @@ if [ "${INSTALL_AUTH_STATE:-UNKNOWN}" != "OK" ]; then
   echo -e "  ${BOLD}  Javitas: ${BLUE}bash \"$INSTALL_DIR/scripts/auth.sh\"${NC}${BOLD} majd ${BLUE}bash \"$INSTALL_DIR/scripts/channels.sh\" restart${NC}"
   echo ""
 fi
+
+# INSTWIZ1: close the machine progress protocol. emit_result is once-only, so
+# if the enroll leg above already reported a failure this stays a no-op.
+emit_progress "$INSTALL_STEP" ok
+emit_result true "" "$ENROLL_BUNDLE"

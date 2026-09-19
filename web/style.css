@@ -7706,3 +7706,47 @@ body {
   color: var(--text, inherit);
 }
 .mem-search-label code { font-size: 11px; opacity: .85; }
+/* === Portfolio szabaly-figyelo kartya (attekinto lap) === */
+.portfolio-card { margin-top: 14px; }
+.portfolio-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+.portfolio-kpi { display: flex; flex-direction: column; gap: 2px; }
+.portfolio-kpi-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.portfolio-kpi-value { font-size: 18px; font-weight: 600; }
+.portfolio-row {
+  display: grid;
+  grid-template-columns: 52px 1fr 56px 104px;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.portfolio-row-name { font-weight: 600; }
+.portfolio-row-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+.portfolio-row-bar i { display: block; height: 100%; background: var(--accent); }
+.portfolio-row.over .portfolio-row-bar i { background: var(--danger); }
+.portfolio-row.over .portfolio-row-name { color: var(--danger); }
+.portfolio-row-pct { text-align: right; font-variant-numeric: tabular-nums; }
+.portfolio-row-usd { text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.portfolio-rules { margin-top: 12px; font-size: 13px; }
+.portfolio-ok { color: var(--text-muted); }
+.portfolio-bad {
+  background: var(--danger-soft);
+  border-left: 3px solid var(--danger);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.portfolio-bad-item { margin-top: 4px; }
+@media (max-width: 640px) {
+  .portfolio-row { grid-template-columns: 46px 1fr 50px; }
+  .portfolio-row-usd { display: none; }
+}

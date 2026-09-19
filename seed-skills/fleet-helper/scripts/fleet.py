@@ -192,6 +192,163 @@ def outgoing_gate_check(text):
     if stars % 2:
         problems.append("odd number of unescaped '*' (Telegram 400: unclosed entity)")
     return problems
+# Csak olyan alakok, amik ONALLO szokent szinte sosem helyesek magyarul.
+# 2026-08-23: az elso eles hasznalat kimutatta, hogy 'el', 'ok', 'kor', 'erre'
+# TELJESEN SZABALYOS magyar szo (igekoto, fonev, fonev, hatarozo), tehat azok
+# csak hamis riasztast adnak. A hamis riasztas rosszabb a semminel, mert
+# leszoktat az eszkoz olvasasarol.
+_ACCENTLESS = {
+    "es": "és", "ot": "öt", "ora": "óra", "ev": "év", "ut": "út", "szo": "szó",
+}
+
+# TARTALEK-LISTA, NEM A FO FORRAS (2026-09-10, Kriptonit merese). A fenti hat par
+# a KAPU 160 parjabol negy szazalek. Amig ez a lista volt az egyetlen forras, a
+# gate_check "OK: mehet"-et adott olyan uzenetre, amit az eles kapu TILTOTT -- az
+# `all`, `ar`, `cim`, `dontes`, `eleg`, `allapot` mind hianyzott innen. Ket kezzel
+# szinkronban tartott lista definicio szerint szetcsuszik; ezert a helper mostantol
+# NEM MASOL, hanem MAGAT A KAPUT hivja, es csak akkor esik vissza a hat parra, ha a
+# kaput nem talalja -- olyankor viszont HANGOSAN jelzi, hogy a fedes reszleges.
+# A masolas amugy sem lett volna eleg: a regi `\b([a-zA-Z]{2,4})\b` minta a
+# HAROM betunel hosszabb bejegyzeseket (`dontes`, `allapot`) meg teljes listaval
+# sem fogta volna meg.
+_GATE_PATHS = (
+    "scripts/hooks/outgoing-copy-gate.py",
+    "../scripts/hooks/outgoing-copy-gate.py",
+)
+_gate_cache = []
+
+
+def _load_gate():
+    """Az ELES kimeno kapu betoltese modulkent (vagy None). Import-biztos: a
+    fajlban minden def/konstans, a futtatas `if __name__ == "__main__"` mogott van."""
+    if _gate_cache:
+        return _gate_cache[0]
+    import importlib.util, os
+    gyoker = [os.environ.get("CLAUDE_PROJECT_DIR") or "", os.getcwd()]
+    d = os.getcwd()
+    for _ in range(4):                      # par szint felfele is
+        d = os.path.dirname(d) or "/"
+        gyoker.append(d)
+    for g in gyoker:
+        for rel in _GATE_PATHS:
+            ut = os.path.normpath(os.path.join(g, rel)) if g else rel
+            if os.path.isfile(ut):
+                try:
+                    sp = importlib.util.spec_from_file_location("_ocg", ut)
+                    mod = importlib.util.module_from_spec(sp)
+                    sp.loader.exec_module(mod)
+                    _gate_cache.append(mod)
+                    return mod
+                except Exception:
+                    pass
+    _gate_cache.append(None)
+    return None
+
+
+def _accent_findings(plain):
+    """Ekezet-talalatok. Ha az eles kapu elerheto, AZT hasznaljuk (sajat szotar,
+    sajat tokenizalo, sajat kivetelek), kulonben a hat parra esunk vissza."""
+    import re as _re
+    g = _load_gate()
+    if g is not None:
+        prose = g.strip_technical(plain)
+        tok_pos = g.accent_check_tokens(prose)
+        szavak = [w for w, _ in tok_pos]
+        if not (g.is_hungarian(plain) or g.accentless_evidence(szavak)):
+            return []
+        elso = {}
+        for w, p in tok_pos:
+            if w in g.ACCENTLESS and w not in elso:
+                elso[w] = p
+        return [{"kind": "ekezet", "word": w,
+                 "context": prose[max(0, elso[w] - 30):elso[w] + len(w) + 15],
+                 "fix": f"'{g.ACCENTLESS[w]}' vagy fogalmazd at ugy, hogy a toldalek eltunjon"}
+                for w in sorted(elso)]
+    ki = [{"kind": "figyelmeztetes",
+           "fix": "AZ ELES KAPU NEM TALALHATO -- az ekezet-ellenorzes a hat szavas "
+                  "tartalek-listaval fut, ami a kapu szotaranak 4 szazaleka. "
+                  "A 'nincs talalat' itt NEM jelent atmenest."}]
+    for m in _re.finditer(r"\b([a-zA-Z]{2,7})\b", plain):
+        w = m.group(1).lower()
+        if w in _ACCENTLESS:
+            ki.append({"kind": "ekezet", "word": m.group(1),
+                       "context": plain[max(0, m.start() - 30):m.end() + 15],
+                       "fix": f"'{_ACCENTLESS[w]}' vagy fogalmazd at ugy, hogy a toldalek eltunjon"})
+    return ki
+
+
+def gate_check(text):
+    """Dry-run the outgoing gates on a finished message, BEFORE calling reply.
+
+    Mirrors the three checks that actually block sends:
+      1. em dash (U+2014)      -- standing ban, blocks the whole message
+      2. accent-less Hungarian words on a word boundary (the suffix false
+         positive: 'Drive-ot' -> 'ot', 'BotFather-es' -> 'es')
+      3. a full scheme-prefixed URL, which the outbound-data gate reads as a
+         destination address when the call looks like a write
+
+    Returns a list of findings; empty list means the message should pass.
+    MarkdownV2 backslash escapes are stripped first, exactly like the gate does.
+    """
+    import re as _re
+    plain = _re.sub(r"\\(.)", r"\1", str(text))
+    # SZAM + MAGYAR TOLDALEK maszkolasa (2026-08-26). A szohatar a kotojelnel van,
+    # tehat a "2024-es"-bol "es" lesz, a "3.9-es"-bol szinten -- es az "es" a
+    # szotarban ott van, mert ONALLO szokent valoban "és" kellene. Ketszer futottam
+    # bele (08-25 napindito "3.9-es", 08-26 szunetmentes-valasz "2024-es"), es
+    # mindketszer ATFOGALMAZTAM a mondatot: rossz javitas, mert a szoveg romlik
+    # attol, hogy az ellenorzo hibas. Ugyanez a maszkolas ment az eles kapuba
+    # (scripts/hooks/outgoing-copy-gate.py, GATETG826) -- a kettonek egyeznie kell,
+    # kulonben az elozetes proba mast mond, mint ami tenylegesen tilt.
+    plain = _re.sub(r"\d[\d.,]*-\w+", " ", plain)
+    out = []
+    n = plain.count("\u2014")
+    if n:
+        out.append({"kind": "gondolatjel", "count": n,
+                    "fix": "cserele kettospontra vagy pontra"})
+    out.extend(_accent_findings(plain))
+    for m in _re.finditer(r"https?://[^\s)\]]+", plain):
+        out.append({"kind": "webcim", "url": m.group(0),
+                    "fix": "sema nelkul ird (pl. github.com/x/y), vagy korulirva"})
+    # PROZA-SZURO: az eles kapu (scripts/hooks/outgoing-copy-gate.py, strip_technical)
+    # a dupla kotojelt es a homoglifat a PROZAN meri, nem a nyers szovegen -- igy a
+    # kodreszletek, utvonalak es kapcsolok nem adnak hamis riasztast. Ugyanazt a
+    # mintat masoljuk ide, kulonben a helper SZIGORUBB lesz, mint az eles kapu.
+    prose = _re.sub(
+        r"""https?://\S+ | [\w.+-]+@[\w-]+\.[\w.]+ | `[^`]*` | \b\w+(?:_\w+)+\b
+          | \b\w+\.[A-Za-z]{2,10}\b | \b[\w-]*/[\w/-]+""",
+        " ", plain, flags=_re.X)
+
+    # DUPLA KOTOJEL gondolatjel-potlokent (2026-09-07). Az ELES kapu 2026-08-16 ota
+    # tiltja; a helperbol kimaradt, ezert HAMIS "OK: mehet"-et adott, es a kuldes a
+    # valodi kapun bukott el. Elso javitasomat Kriptonit merte vissza: a NYERS
+    # szovegen szamolva HAMIS RIASZTAST adott kodblokkos parancsra
+    # ("git log --oneline -- src/"), tehat szigorubb lett az eles kapunal.
+    # *** MINDKET IRANY KAR: a hamis OK megnyugtat, a hamis riasztas pedig ARRA
+    # VESZ RA, HOGY ATIRJ EGY JO SZOVEGET (a fenti 08-26-os komment pont ezt
+    # nevesiti). *** Ezert a prozan merunk, ahogy az eles kapu.
+    dh = prose.count(" -- ")
+    if dh:
+        out.append({"kind": "dupla-kotojel", "count": dh,
+                    "fix": "kettospont, zarojel vagy uj mondat, kotojel nelkul"})
+
+    # HOMOGLIFA (2026-09-07, Kriptonit merese). Latin szoba keveredett nem-latin
+    # betu (jellemzoen cirill 'o', 'a', 'e'): OLVASVA LATHATATLAN, tehat itt a
+    # hamis "OK" a teljes vedelmet viszi el -- az em dasht es a dupla kotojelt
+    # eszreveszed elolvasva, ezt nem.
+    import unicodedata as _ud
+    def _script(ch):
+        try:
+            return _ud.name(ch).split()[0]
+        except ValueError:
+            return "?"
+    for w in _re.findall(r"[^\W\d_]{2,}", prose, flags=_re.UNICODE):
+        sc = {_script(c) for c in w if c.isalpha()}
+        if "LATIN" in sc and len(sc) > 1:
+            bad = next(c for c in w if c.isalpha() and _script(c) != "LATIN")
+            out.append({"kind": "homoglifa", "word": w, "char": repr(bad),
+                        "fix": "ird ujra a szot latin betukkel (olvasva lathatatlan, de a keresest eltori)"})
+    return out
 
 
 def _out(v):
@@ -234,6 +391,13 @@ def main(argv):
         _out(kanban_due_today())
     elif cmd == "kanban-stuck":
         _out(kanban_stuck(int(rest[0]) if rest else 14400))
+    elif cmd == "gate-check":
+        found = gate_check(rest[0] if rest else sys.stdin.read())
+        if not found:
+            print("OK: mehet")
+            return 0
+        _out(found)
+        return 1
     elif cmd == "kanban-status":
         _out(kanban_by_status(rest[0]))
     else:

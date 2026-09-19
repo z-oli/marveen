@@ -293,6 +293,17 @@
           <div class="overview-activity" id="overviewActivity"></div>
         </div>
       </div>
+      <!-- Portfolio szabaly-figyelo. Rejtve marad, amig a figyelo (scripts/portfolio-figyelo.py)
+           le nem futott legalabb egyszer: a /api/portfolio ilyenkor 204-et ad. -->
+      <div class="overview-card portfolio-card" id="overviewPortfolioCard" hidden>
+        <div class="overview-card-head">
+          <h3>Portfólió szabály-figyelő</h3>
+          <span class="overview-card-meta" id="overviewPortfolioMeta"></span>
+        </div>
+        <div class="portfolio-summary" id="overviewPortfolioSummary"></div>
+        <div class="portfolio-assets" id="overviewPortfolioAssets"></div>
+        <div class="portfolio-rules" id="overviewPortfolioRules"></div>
+      </div>
     </div>
 
     <!-- === Kanban Page === -->

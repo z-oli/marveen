@@ -12082,6 +12082,58 @@ function renderQuotaStrip(q) {
   }
 }
 
+// Portfolio szabaly-figyelo kartya. A szamokat NEM itt szamoljuk: a
+// scripts/portfolio-figyelo.py irja a store/portfolio-allapot.json-t, ez csak
+// megjeleniti. 204 -> a figyelo meg nem futott, a kartya rejtve marad.
+async function loadPortfolio() {
+  const card = document.getElementById('overviewPortfolioCard')
+  if (!card) return
+  try {
+    const res = await fetch('/api/portfolio')
+    if (res.status === 204) { card.hidden = true; return }
+    if (!res.ok) throw new Error('HTTP ' + res.status)
+    const d = await res.json()
+    const pct = (v) => (typeof v === 'number' ? v.toFixed(1) + '%' : '—')
+    const usd = (v) => (typeof v === 'number' ? Math.round(v).toLocaleString('hu-HU').replace(/,/g, ' ') + ' USD' : '—')
+
+    document.getElementById('overviewPortfolioMeta').textContent =
+      d.frissitve ? 'frissítve: ' + formatRelative(Date.parse(d.frissitve)) : ''
+
+    document.getElementById('overviewPortfolioSummary').innerHTML = [
+      ['Összesen', usd(d.ossz_usd)],
+      ['Befektetve', pct(d.befektetve_pct)],
+      ['Stablecoin', pct(d.stablecoin_pct)],
+      ['Készpénz', pct(d.keszpenz_pct)],
+    ].map(([k, v]) => `<div class="portfolio-kpi"><span class="portfolio-kpi-label">${escapeHtml(k)}</span><span class="portfolio-kpi-value">${escapeHtml(v)}</span></div>`).join('')
+
+    const eszkozok = Array.isArray(d.eszkozok) ? d.eszkozok : []
+    const maxPct = eszkozok.reduce((m, b) => Math.max(m, b.arany_pct || 0), 0) || 1
+    document.getElementById('overviewPortfolioAssets').innerHTML = eszkozok.map((b) => {
+      const tul = (b.arany_pct || 0) > 10
+      return `<div class="portfolio-row${tul ? ' over' : ''}">
+        <span class="portfolio-row-name">${escapeHtml(b.eszkoz || '?')}</span>
+        <span class="portfolio-row-bar"><i style="width:${Math.max(2, Math.round(100 * (b.arany_pct || 0) / maxPct))}%"></i></span>
+        <span class="portfolio-row-pct">${pct(b.arany_pct)}</span>
+        <span class="portfolio-row-usd">${usd(b.ertek_usd)}</span>
+      </div>`
+    }).join('')
+
+    const sertesek = Array.isArray(d.sertesek) ? d.sertesek : []
+    document.getElementById('overviewPortfolioRules').innerHTML = sertesek.length === 0
+      ? '<div class="portfolio-ok">Mind a négy szabály teljesül.</div>'
+      : `<div class="portfolio-bad"><strong>Sérülő szabály: ${sertesek.length}</strong>${
+          sertesek.map((v) => `<div class="portfolio-bad-item">${escapeHtml(String(v.szabaly))}. ${escapeHtml(v.szoveg || '')}</div>`).join('')
+        }</div>`
+
+    card.hidden = false
+  } catch (err) {
+    // Nem rejtjuk el a kartyat, ha egyszer mar latszott: a nema eltunes
+    // ugyanugy nezne ki, mint a "minden rendben".
+    const rules = document.getElementById('overviewPortfolioRules')
+    if (rules) rules.innerHTML = '<div class="portfolio-bad">A figyelő állapota nem olvasható: ' + escapeHtml(String(err.message || err)) + '</div>'
+  }
+}
+
 async function loadOverview() {
   try {
     const res = await fetch('/api/overview')
@@ -12132,6 +12184,8 @@ async function loadOverview() {
   } catch (err) {
     document.getElementById('overviewActivity').innerHTML = '<div style="color:var(--text-muted);font-size:13px">' + t('overview.error', { msg: escapeHtml(String(err.message || err)) }) + '</div>'
   }
+  // Kulon try/catch-ben: az attekinto lap hibaja ne vigye magaval a figyelot, es forditva.
+  loadPortfolio()
 }
 
 // Brand mark + product-brand chrome: pull the configured brand from

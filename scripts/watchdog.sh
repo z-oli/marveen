@@ -106,6 +106,22 @@ fi
 
 # Replays delivered-but-not-completed messages from the last 2 hours into
 # a freshly restarted agent session. Called after a confirmed restart.
+#
+# *** DO NOT ENABLE THIS WITHOUT FIXING THE FILTER FIRST (measured 2026-09-07). ***
+# watchdog-replay.py selects `status='delivered' AND completed_at IS NULL` and
+# calls that "unfinished". It is not: NO code path marks a delivered inter-agent
+# message complete any more. Measured on the live DB: 457 delivered rows, all 457
+# with completed_at NULL; the only 55 `done` rows are from a retired path and stop
+# on 2026-08-27. So the predicate is true for EVERY delivered message, and a
+# restart would re-inject every message from the last 2 hours (28 at the time of
+# measuring), not the unfinished ones.
+#
+# Until 2026-09-07 this was masked: the request below asked for `?to=`, the API
+# answered 400, and the replay died on the error object before reaching this
+# logic. Fixing the parameter made the path REACHABLE, not correct. This script
+# is currently dormant (no launchd job and no caller references it), which is why
+# the fix was left at "reachable + honest" instead of inventing a completion
+# protocol nobody asked for.
 replay_unfinished_messages() {
   local AGENT_ID="$1"
   local SESSION_NAME="$2"
@@ -116,11 +132,23 @@ replay_unfinished_messages() {
   NOW=$(date +%s)
   CUTOFF=$(( NOW - 7200 ))
 
+  # The mailbox filter is "agent" -- "to" and "agent_id" are NOT read, and the
+  # endpoint answers an unknown parameter with HTTP 400 + a JSON error object.
+  # curl still exits 0 on a 4xx, so the "|| return" above never fires: the error
+  # object reached watchdog-replay.py, which iterated a dict and died on
+  # 'str' has no attribute 'get'. Result: the replay silently never replayed.
+  # Measured 2026-09-07 (?to= -> 400, ?agent= -> 200). Hence both the corrected
+  # parameter AND the shape check below -- a 200 is not proof of a usable body.
   RESPONSE=$(curl -s -m 5 \
     -H "Authorization: Bearer $TOKEN" \
-    "http://localhost:${WEB_PORT}/api/messages?to=${AGENT_ID}&limit=200" 2>/dev/null) || return
+    "http://localhost:${WEB_PORT}/api/messages?agent=${AGENT_ID}&limit=200" 2>/dev/null) || return
 
   [ -z "$RESPONSE" ] || [ "$RESPONSE" = "[]" ] && return
+  case "$RESPONSE" in
+    \[*) ;;
+    *) echo "$(timestamp) [watchdog] message list not a JSON array, skipping replay: ${RESPONSE:0:120}" >> "$LOG"
+       return ;;
+  esac
 
   TMPDATA=$(mktemp)
   echo "$RESPONSE" > "$TMPDATA"
