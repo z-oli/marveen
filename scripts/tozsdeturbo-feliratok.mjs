@@ -13,6 +13,7 @@
 // Hasznalat:
 //   node scripts/tozsdeturbo-feliratok.mjs            # minden lecke
 //   node scripts/tozsdeturbo-feliratok.mjs --limit 5  # elso 5 (proba)
+//   node scripts/tozsdeturbo-feliratok.mjs --kurzus eves-bonusz --csak kezdd-itt,1-figyelmeztetes-a-skalpolashoz
 
 import pw from '/Users/zoli/marveen/node_modules/playwright/index.js'
 import { writeFileSync, existsSync, mkdirSync, readdirSync, appendFileSync } from 'node:fs'
@@ -22,7 +23,15 @@ const { chromium } = pw
 const REPO = '/Users/zoli/marveen'
 const KIMENET = join(REPO, 'store', 'tozsdeturbo', 'vtt')
 const HALADAS = join(REPO, 'store', 'tozsdeturbo', 'haladas.log')
-const KURZUS = 'https://tozsdeturbo.hu/kurzus/mentorprogram-v2'
+// A kurzus es a lecke-szures OPCIONALIS kapcsolo, az alapertelmezes valtozatlan
+// (mentorprogram-v2, minden lecke) -- mas agensek is hivjak ezt a szkriptet.
+// 2026-09-01-en kellett: az eves-bonusz kurzus negy leckeje hianyzott, es a
+// fixen bedrotozott kurzus-URL miatt ezt a szkriptet nem lehetett rajuk hasznalni.
+const kurzusArg = process.argv.indexOf('--kurzus')
+const KURZUS_SLUG = kurzusArg > -1 ? process.argv[kurzusArg + 1] : 'mentorprogram-v2'
+const KURZUS = `https://tozsdeturbo.hu/kurzus/${KURZUS_SLUG}`
+const csakArg = process.argv.indexOf('--csak')
+const CSAK = csakArg > -1 ? new Set(process.argv[csakArg + 1].split(',').map(x => x.trim()).filter(Boolean)) : null
 const SZUNET_MS = 2500          // leckek kozott
 const JATSZAS_MS = 9000         // ennyit varunk a .vtt-re
 const limitArg = process.argv.indexOf('--limit')
@@ -65,7 +74,17 @@ const meglevo = new Set([
   ...readdirSync(KIMENET).map(f => f.replace(/\.vtt$/, '')),
   ...(existsSync(ATIRAT) ? readdirSync(ATIRAT).map(f => f.replace(/\.txt$/, '')) : []),
 ])
-const munka = sorrend.filter(h => !meglevo.has(h.split('/').pop())).slice(0, LIMIT)
+let munka = sorrend.filter(h => !meglevo.has(h.split('/').pop()))
+if (CSAK) {
+  // A --csak SZURES, nem felulbiralas: ami mar megvan, azt tovabbra is atugorja.
+  // Igy egy elgepelt slug nem tolti le ujra a fel kurzust.
+  munka = munka.filter(h => CSAK.has(h.split('/').pop()))
+  const nemTalalt = [...CSAK].filter(sl => !leckek.some(h => h.split('/').pop() === sl))
+  if (nemTalalt.length) naplo(`FIGYELEM: a --csak listabol NINCS a kurzusban: ${nemTalalt.join(', ')}`)
+  const marMegvan = [...CSAK].filter(sl => meglevo.has(sl))
+  if (marMegvan.length) naplo(`FIGYELEM: a --csak listabol MAR MEGVAN (atugorva): ${marMegvan.join(', ')}`)
+}
+munka = munka.slice(0, LIMIT)
 
 naplo(`START: ${leckek.length} lecke osszesen, ${meglevo.size} mar megvan, ${munka.length} feldolgozando`)
 
