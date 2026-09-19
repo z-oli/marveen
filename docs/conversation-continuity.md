@@ -25,10 +25,15 @@ agent behaviour (which can fail or restart).
 3. **Outbound capture** — `PostToolUse` hook `scripts/hooks/ledger-outbound.py` on a
    channel plugin's reply tool records the reply text as `direction='out'` (resolves
    the `chat_id=0` shorthand to the owner chat). The hook accepts any
-   `mcp__plugin_<provider>_<server>__reply` tool, but **`PostToolUse` matchers are not
-   automatic — register one per installed channel plugin** (see the settings block
-   below). A missing matcher is the silent-failure case described under
-   *Provider coverage*.
+   `mcp__plugin_<provider>_<server>__reply` tool, and the `PostToolUse` matcher is
+   the regex `mcp__plugin_.*__reply`, so a newly installed channel plugin is covered
+   without a settings edit. (Until 2026-09-18 the matcher was the literal Telegram
+   tool name: the first Discord reply was never logged, and the reply guard kept
+   demanding a Telegram answer to a Discord message.) A matcher that names one
+   provider is the silent-failure case described under *Provider coverage*.
+   The inbound row also stores the envelope's `source` (`plugin:<provider>:<server>`),
+   which is how the guard, the live drain and the startup replay name the reply
+   tool that can actually reach that chat.
 4. **Startup replay** — `SessionStart` hook `scripts/hooks/ledger-replay.py` injects
    hidden `additionalContext` at the top of the fresh session's context:
    - the **last N turns** of the transcript in chronological order, each prefixed
@@ -85,8 +90,7 @@ self-scope by cwd, so they are safe even if inherited. Merge this `hooks` object
       { "hooks": [ { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/ledger-capture.py\"", "timeout": 15 } ] }
     ],
     "PostToolUse": [
-      { "matcher": "mcp__plugin_telegram_telegram__reply", "hooks": [ { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/ledger-outbound.py\"", "timeout": 15 } ] },
-      { "matcher": "mcp__plugin_discord_discord__reply", "hooks": [ { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/ledger-outbound.py\"", "timeout": 15 } ] }
+      { "matcher": "mcp__plugin_.*__reply", "hooks": [ { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/ledger-outbound.py\"", "timeout": 15 } ] }
     ],
     "SessionStart": [
       { "matcher": "startup|resume|clear", "hooks": [ { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/ledger-replay.py\"", "timeout": 15 } ] }
@@ -96,8 +100,8 @@ self-scope by cwd, so they are safe even if inherited. Merge this `hooks` object
 ```
 
 - `UserPromptSubmit` takes no matcher (fires on every prompt).
-- **One `PostToolUse` entry per installed channel plugin.** Drop the discord line if
-  that plugin is not installed; add a line for any other channel plugin you run.
+- **One `PostToolUse` entry covers every channel plugin** (`mcp__plugin_.*__reply`).
+  Do not narrow it to a single provider's tool name.
 
 ## Provider coverage — the silent failure to avoid
 
@@ -119,9 +123,10 @@ Every channel you actually converse on should appear, in **both** directions. If
 your primary channel is missing, the inbound hook is not matching its envelope or
 its reply tool has no `PostToolUse` matcher — continuity is not working for it,
 however healthy the totals look.
-- `PostToolUse` matcher `mcp__plugin.telegram.telegram__reply`: the `.` are regex
-  wildcards that match the sanitized tool name `mcp__plugin_telegram_telegram__reply`
-  (the hook also double-checks `tool_name` contains `telegram`+`reply`).
+- `PostToolUse` matcher `mcp__plugin_.*__reply`: a regex over the sanitized tool
+  name, matching `mcp__plugin_telegram_telegram__reply`,
+  `mcp__plugin_discord_discord__reply` and any later channel plugin (the hook
+  re-checks the same shape on `tool_name`).
 - `SessionStart` matcher `startup|resume|clear`: the matcher is a **regex over the
   `source` field**, whose only values are `startup` / `resume` / `clear` / `compact`.
   There is no `auto` source — an `"auto"` matcher silently matches nothing, so the

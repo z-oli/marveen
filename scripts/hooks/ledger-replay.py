@@ -146,11 +146,14 @@ def _build_output(transcript, open_q, owner):
         # hook would die, and the fresh session would start with NO context --
         # fail-open, the silence looks like a calm start.
         chat_id, message_id, text, ts, att_kind, att_file_id = open_q[:6]
+        source = open_q[6] if len(open_q) > 6 else None
+        tool = ledger_lib.reply_tool_for(source)
+        label = ledger_lib.provider_label(source)
         snippet = _snippet(text, _max_snippet())
         parts.append(
             f'NYITOTT KÉRDÉS (még NEM válaszoltad meg): {owner} utolsó üzenete '
             f'(chat {chat_id}, message_id {message_id}): "{snippet}". Válaszolj rá '
-            f'MOST a telegram reply tool (mcp__plugin_telegram_telegram__reply) '
+            f'MOST a {label} reply tool ({tool}) '
             f'meghívásával a megfelelő chat_id-re, a lenti kontextusból folytatva.'
         )
         if att_file_id:

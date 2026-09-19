@@ -12,6 +12,7 @@ derived from the running session's cwd so each session only ever sees its OWN
 chat. Pure stdlib (sqlite3) -- no node startup, no jq.
 """
 import os
+import re
 import sqlite3
 import time
 
@@ -31,6 +32,7 @@ CREATE TABLE IF NOT EXISTS conversation_log (
   attachment_kind TEXT,
   attachment_file_id TEXT,
   reply_to_message_id TEXT,
+  source TEXT,
   UNIQUE(agent_id, chat_id, direction, message_id)
 )
 """
@@ -43,7 +45,36 @@ _MIGRATION_COLUMNS = (
     ("attachment_kind", "TEXT"),
     ("attachment_file_id", "TEXT"),
     ("reply_to_message_id", "TEXT"),
+    # The channel the inbound came from (`plugin:<provider>:<server>`, the
+    # <channel source=".."> attribute). Added 2026-09-18 when Discord joined
+    # Telegram: without it every "answer this" directive named the Telegram
+    # reply tool, which rejects a Discord chat_id as not allowlisted.
+    ("source", "TEXT"),
 )
+
+# Fallback for rows written before the source column existed, and for the
+# rare inbound that carries no source attribute at all.
+DEFAULT_SOURCE = "plugin:telegram:telegram"
+
+
+def reply_tool_for(source):
+    """The MCP reply tool that can answer an inbound from `source`.
+    "plugin:discord:discord" -> "mcp__plugin_discord_discord__reply".
+    Unknown / empty source falls back to the Telegram tool."""
+    src = (source or DEFAULT_SOURCE).strip()
+    m = re.match(r"^plugin:([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)$", src)
+    if not m:
+        src, m = DEFAULT_SOURCE, re.match(r"^plugin:([^:]+):([^:]+)$", DEFAULT_SOURCE)
+    provider, server = (re.sub(r"[^A-Za-z0-9_]", "_", x) for x in m.groups())
+    return f"mcp__plugin_{provider}_{server}__reply"
+
+
+def provider_label(source):
+    """Human label for messages: "Telegram", "Discord", ..."""
+    src = (source or DEFAULT_SOURCE).strip()
+    m = re.match(r"^plugin:([A-Za-z0-9_.-]+):", src)
+    name = m.group(1) if m else "telegram"
+    return name[:1].upper() + name[1:]
 
 RECENT_LIMIT = 20
 
@@ -248,8 +279,11 @@ def connect():
 
 def log_inbound(agent_id, chat_id, message_id, text, ts,
                 attachment_kind=None, attachment_file_id=None,
-                reply_to_message_id=None):
+                reply_to_message_id=None, source=None):
     """Record an inbound user message. Idempotent on (agent_id, chat_id, in, message_id).
+
+    source: the <channel source=".."> value (plugin:<provider>:<server>), so the
+    guard / drain / replay can name the reply tool that actually reaches this chat.
 
     attachment_kind/file_id: set for voice / video_note messages that arrived
     WITHOUT a transcript, so a respawned session can still download and
@@ -265,10 +299,10 @@ def log_inbound(agent_id, chat_id, message_id, text, ts,
         con.execute(
             "INSERT OR IGNORE INTO conversation_log"
             " (agent_id, chat_id, direction, message_id, text, ts, created_at,"
-            "  attachment_kind, attachment_file_id, reply_to_message_id)"
-            " VALUES (?, ?, 'in', ?, ?, ?, ?, ?, ?, ?)",
+            "  attachment_kind, attachment_file_id, reply_to_message_id, source)"
+            " VALUES (?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, ?)",
             (str(agent_id), str(chat_id), str(message_id), text, ts, int(time.time()),
-             attachment_kind, attachment_file_id, reply_to_message_id),
+             attachment_kind, attachment_file_id, reply_to_message_id, source or None),
         )
         con.commit()
     finally:
@@ -322,20 +356,21 @@ def recent(agent_id, limit=RECENT_LIMIT):
 def open_question_with_age(agent_id):
     """Like open_question() but also returns the open inbound's created_at (unix
     epoch). Returns (chat_id, message_id, text, ts, created_at, attachment_kind,
-    attachment_file_id) or None. Used by the live-drain hook, which needs the
-    age for its grace window."""
+    attachment_file_id, source) or None. Used by the live-drain hook, which needs
+    the age for its grace window. Callers prefix-slice (HOOKARITAS821), so the
+    trailing `source` is a widening, not a break."""
     con = connect()
     try:
         row = con.execute(
             "SELECT chat_id, message_id, text, ts, created_at, id,"
-            "       attachment_kind, attachment_file_id"
+            "       attachment_kind, attachment_file_id, source"
             " FROM conversation_log"
             " WHERE agent_id=? AND direction='in' ORDER BY created_at DESC, id DESC LIMIT 1",
             (str(agent_id),),
         ).fetchone()
         if not row:
             return None
-        chat_id, message_id, text, ts, created_at, rid, att_kind, att_file_id = row
+        chat_id, message_id, text, ts, created_at, rid, att_kind, att_file_id, source = row
         later_out = con.execute(
             "SELECT 1 FROM conversation_log"
             " WHERE agent_id=? AND direction='out'"
@@ -344,7 +379,7 @@ def open_question_with_age(agent_id):
         ).fetchone()
         if later_out:
             return None  # the last inbound has already been answered
-        return (chat_id, message_id, text, ts, created_at, att_kind, att_file_id)
+        return (chat_id, message_id, text, ts, created_at, att_kind, att_file_id, source)
     finally:
         con.close()
 
@@ -352,7 +387,7 @@ def open_question_with_age(agent_id):
 def open_question(agent_id):
     """The most recent inbound with NO later outbound (the unanswered question),
     or None. Returns (chat_id, message_id, text, ts, attachment_kind,
-    attachment_file_id)."""
+    attachment_file_id, source)."""
     oq = open_question_with_age(agent_id)
     if not oq:
         return None
@@ -361,4 +396,5 @@ def open_question(agent_id):
     # every caller that wraps only the open_question() call in try/except
     # would read the failure as "ledger unavailable" -- fail-open, silently.
     chat_id, message_id, text, ts, _created_at, att_kind, att_file_id = oq[:7]
-    return (chat_id, message_id, text, ts, att_kind, att_file_id)
+    source = oq[7] if len(oq) > 7 else None
+    return (chat_id, message_id, text, ts, att_kind, att_file_id, source)

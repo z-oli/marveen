@@ -23,7 +23,7 @@ agent_id is derived from the process cwd (generic across channel agents), so the
 drain only ever surfaces THIS agent's own open question. When it surfaces one it
 writes exactly this block to stdout:
 
-    OPEN_QUESTION chat_id=<id> message_id=<id>
+    OPEN_QUESTION chat_id=<id> message_id=<id> source=<plugin:..> reply_tool=<mcp tool>
     <text>
 
 With --precheck (the task's scheduler preCheck, via ledger-live-drain-precheck.sh)
@@ -91,6 +91,7 @@ def main():
     # question is simply never surfaced. The reply guard died exactly this way
     # for ten days (#1028).
     chat_id, message_id, text, ts, created_at, att_kind, att_file_id = oq[:7]
+    source = oq[7] if len(oq) > 7 else None
 
     # GRACE: skip a fresh inbound the agent may be answering right now.
     try:
@@ -113,7 +114,11 @@ def main():
             f'és írasd át (voice-message-transcribe skill, '
             f'attachment_file_id="{att_file_id}") mielőtt válaszolsz.]'
         )
-    sys.stdout.write(f"OPEN_QUESTION chat_id={chat_id} message_id={message_id}\n{snippet}\n")
+    sys.stdout.write(
+        f"OPEN_QUESTION chat_id={chat_id} message_id={message_id} "
+        f"source={source or ledger_lib.DEFAULT_SOURCE} "
+        f"reply_tool={ledger_lib.reply_tool_for(source)}\n{snippet}\n"
+    )
     _record_surfaced(path, message_id)
     sys.exit(0)
 

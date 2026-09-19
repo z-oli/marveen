@@ -960,11 +960,13 @@ def main():
         )
         sys.exit(2)
 
-    # GATECOPY828 (#1184): the scaffold wires this hook onto reply AND
-    # edit_message (an edit can replace a working code block with a broken
-    # one). The dispatch must recognise BOTH, or the edit half of the matcher
-    # invokes a hook that exits 0 without auditing anything.
-    if re.search(r"telegram.*__(reply|edit_message)$", tool, re.I):
+    # Minden csatorna-plugin reply eszkoze (telegram, discord, ...) ugyanazt a
+    # text/caption/message alakot hasznalja, tehat ugyanaz az ellenorzes all ra.
+    # AZ EDIT_MESSAGE UGYANIGY KELL (GATECOPY828, #1184): egy szerkesztes le tud
+    # cserelni egy mukodo blokkot egy hibasra. A ket oldal kulon-kulon hianyos volt
+    # (az upstream csak telegramra, a mienk csak reply-ra), ezert a ketto unioja all
+    # itt, 2026-09-23-i rebase-feloldas.
+    if re.search(r"^mcp__plugin_.*__(reply|edit_message)$", tool, re.I):
         telegram_gate(tool_input)  # exits; never falls through
     # COPYGATEMATCHER904: the hook is REGISTERED for manage_email, create_draft,
     # update_draft and the Gmail connector's reply/send_message/forward tools,

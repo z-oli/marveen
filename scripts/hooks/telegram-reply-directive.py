@@ -18,8 +18,13 @@ import os
 import json
 import re
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ledger_lib  # noqa: E402
+
+# Any channel plugin (telegram, discord, ...): the directive names the reply
+# tool that belongs to the inbound's own source, not a fixed provider.
 CHANNEL_RX = re.compile(
-    r'<channel\s+source="plugin:telegram:telegram"([^>]*)>',
+    r'<channel\s+source="(plugin:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+)"([^>]*)>',
     re.DOTALL,
 )
 
@@ -37,12 +42,15 @@ def main():
     prompt = payload.get("prompt") or ""
     m = CHANNEL_RX.search(prompt)
     if not m:
-        sys.exit(0)  # not a Telegram message -> stay silent
-    chat_id = _attr(m.group(1), "chat_id") or "<a bejövő chat_id>"
+        sys.exit(0)  # not a channel message -> stay silent
+    source = m.group(1)
+    tool = ledger_lib.reply_tool_for(source)
+    label = ledger_lib.provider_label(source)
+    chat_id = _attr(m.group(2), "chat_id") or "<a bejövő chat_id>"
     sys.stdout.write(
-        f"[TELEGRAM-DIREKTÍVA] Ez az üzenet a Telegram csatornáról érkezett "
+        f"[{label.upper()}-DIREKTÍVA] Ez az üzenet a {label} csatornáról érkezett "
         f"(chat_id={chat_id}). A válaszod KÖTELEZŐEN a "
-        f"mcp__plugin_telegram_telegram__reply toolon keresztül menjen ki "
+        f"{tool} toolon keresztül menjen ki "
         f"(chat_id={chat_id}) -- a sima assistant-szöveg NEM jut el hozzá, csak a "
         f"tmux-ba. Ha csak nyugtázás kell (ok/köszi), akkor sem baj, de érdemi "
         f"választ MINDIG a reply toollal küldj.\n"

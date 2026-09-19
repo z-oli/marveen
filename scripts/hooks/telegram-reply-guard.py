@@ -114,6 +114,9 @@ def main():
     # outside the try above, so a mismatch would kill the hook and the harness
     # would read the empty stdout as "allow" -- the guard would never block).
     chat_id, message_id, text, ts, created_at = oq[:5]
+    source = oq[7] if len(oq) > 7 else None
+    tool = ledger_lib.reply_tool_for(source)
+    label = ledger_lib.provider_label(source)
 
     # Pure acknowledgement -> no reply owed.
     if _is_ack(text):
@@ -139,11 +142,11 @@ def main():
         snippet = snippet[:157] + "..."
 
     reason = (
-        f"⚠️ VÁLASZOLATLAN TELEGRAM-ÜZENET (chat_id={chat_id}): \"{snippet}\"\n"
-        f"A fordulót NEM zárhatod le, amíg NEM küldtél Telegram-választ a "
-        f"mcp__plugin_telegram_telegram__reply toolon keresztül (chat_id={chat_id}). "
+        f"⚠️ VÁLASZOLATLAN {label.upper()}-ÜZENET (chat_id={chat_id}): \"{snippet}\"\n"
+        f"A fordulót NEM zárhatod le, amíg NEM küldtél {label}-választ a "
+        f"{tool} toolon keresztül (chat_id={chat_id}). "
         f"A sima szöveges (assistant text) kimenet NEM jut el a felhasználóhoz -- "
-        f"ő csak a Telegramot látja. Küldd el a választ a reply toollal MOST, "
+        f"ő csak a {label}ot látja. Küldd el a választ a reply toollal MOST, "
         f"utána zárhatod a fordulót."
     )
     print(json.dumps({"decision": "block", "reason": reason}))
