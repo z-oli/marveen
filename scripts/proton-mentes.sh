@@ -41,6 +41,56 @@ UJ="$(ls -t "${REPO}"/backups/claudeclaw-*.tar.gz 2>/dev/null | head -1 || true)
 NEV="$(basename "$UJ")"
 CEL="${PROTON}/${NEV}.enc"
 
+# *** A NYESES MINDEN FUTASBAN LEFUT, A TOBBI LEPES ELOTT (2026-09-18, Zoli jovahagyasaval). ***
+# ELSO BAJ (javitva ma): korabban a feltoltes UTAN allt, es 2026-08-26 ota egyetlen ejjel sem
+# futott le -- kozvetlenul egy 18 MB-os iras utan listazta a mappat, a Proton file-provider
+# olyankor szinkronizal, es az `ls -t` elhasal. Harom proba ot masodperces szunettel keves.
+# 24 csomag gyult ossze 14 helyett; nyugalmi allapotban ugyanaz a parancs hibatlanul fut.
+# MASODIK BAJ (ezert all MOST a `mar fent van` vizsgalat ELOTT): ha az aznapi csomag mar
+# fent volt, a script kilepett, MIELOTT a nyeseshez ert volna -- tehat egy naptaron beluli
+# masodik futas csendben kihagyta a takaritast.
+# A KUSZOB ATTOL FUGG, JON-E MEG MA CSOMAG. Ha a mai mar fent van, KEEP darabot tartunk meg;
+# ha meg nem, KEEP-1-et, es a rakovetkezo iras teszi teljesse a KEEP-et. Igy a futas VEGEN
+# mindket agon pontosan KEEP csomag all a mappaban.
+if [[ -f "$CEL" ]]; then MEGTART=$KEEP; else MEGTART=$((KEEP-1)); fi
+# ARA, AMIT VALLALUNK: ha a mentes a nyeses UTAN bukik el, egy futamnyira KEEP-1 csomagunk
+# van. A legregebbi elvesztese elhanyagolhato egy nem-futo nyeseshez kepest.
+# Regi tavoli csomagok nyesese. Csak a sajat nevmintankat bantjuk.
+#
+# MIERT NEM EZ A SCRIPT UTOLSO PARANCSA (2026-08-27): a `set -o pipefail` miatt a
+# nyeses barmelyik tagjanak nem-nulla kilepese A TELJES SCRIPT kilepesi kodja lett.
+# Az elso eles, felugyelet nelkuli futas (03:40) SIKERES volt -- a titkositott
+# csomag fent van, a visszafejtes ellenorizve --, a launchd megis "last exit code = 1"-et
+# konyvelt el, mert a Proton file-provider mappa listazasa megbotlott a szinkron
+# kozben. Ez a legrosszabb fajta hiba: a sikeres mentes bukasnak latszik, tehat egy
+# valodi bukas SEM kulonboztetheto meg tole. A nyeses mostantol elszigetelve fut,
+# es ha elbukik, azt NAPLOZZA, nem pedig a mentes eredmenyet hazudja el.
+# ELOSZOR UJRAPROBALJUK, ES CSAK UTANA PANASZKODUNK (2026-08-28). A 03:40-es futas
+# ugyanabban a masodpercben jelentette a listazas bukasat, amelyikben a friss csomag
+# kikerult: a Proton file-provider mappa epp szinkronizalt. Percekkel kesobb ugyanaz a
+# parancs hibatlanul futott. Egy ilyen atmeneti bukasra kiadott figyelmeztetes ROSSZABB
+# a semminel: minden ejjel megjelenik, senki nem nezi meg, es amikor egyszer VALODI lesz,
+# ugyanugy nez ki. Harom proba, kozottuk szunet; ha mind elbukik, AKKOR szolunk.
+REGIEK=""
+NYESES_OK=0
+for _proba in 1 2 3; do
+  if REGIEK="$(ls -t "${PROTON}"/claudeclaw-*.tar.gz.enc 2>/dev/null | tail -n +$((MEGTART+1)))"; then
+    NYESES_OK=1
+    break
+  fi
+  sleep 5
+done
+if [[ "$NYESES_OK" -eq 0 ]]; then
+  log "FIGYELEM: a nyeses listazasa HAROM probara sem sikerult (a mentes maga rendben van)"
+  REGIEK=""
+fi
+if [[ -n "$REGIEK" ]]; then
+  while IFS= read -r r; do
+    [[ -n "$r" ]] || continue
+    rm -f "$r" && log "nyesve: $(basename "$r")" || log "FIGYELEM: nem sikerult nyesni: $(basename "$r")"
+  done <<< "$REGIEK"
+fi
+
 if [[ -f "$CEL" ]]; then
   log "kihagyva, mar fent van: ${NEV}.enc"
   exit 0
@@ -68,43 +118,12 @@ fi
 
 mv "$TMP" "$CEL"
 chmod 600 "$CEL"
-log "feltoltve: ${NEV}.enc ($(du -h "$CEL" | cut -f1)), visszafejtes ellenorizve, openssl=$OPENSSL"
+# A SZO SZAMIT (2026-09-18): a szkript a SZINKRON MAPPABA ir, a feltoltest a Proton app
+# vegzi, tehat ezt a lepest NEM latjuk. A regi "feltoltve" ige tobbet allitott, mint
+# amit a kod merni tud, es 15 napig senki nem kerdezett ra. Amit valoban ellenoriztunk:
+# a helyi iras es a visszafejtes. A feltoltes tenye a Proton weben ellenorizheto.
+log "szinkron-mappaba kiirva: ${NEV}.enc ($(du -h "$CEL" | cut -f1)), visszafejtes ellenorizve, openssl=$OPENSSL"
 
-# Regi tavoli csomagok nyesese. Csak a sajat nevmintankat bantjuk.
-#
-# MIERT NEM EZ A SCRIPT UTOLSO PARANCSA (2026-08-27): a `set -o pipefail` miatt a
-# nyeses barmelyik tagjanak nem-nulla kilepese A TELJES SCRIPT kilepesi kodja lett.
-# Az elso eles, felugyelet nelkuli futas (03:40) SIKERES volt -- a titkositott
-# csomag fent van, a visszafejtes ellenorizve --, a launchd megis "last exit code = 1"-et
-# konyvelt el, mert a Proton file-provider mappa listazasa megbotlott a szinkron
-# kozben. Ez a legrosszabb fajta hiba: a sikeres mentes bukasnak latszik, tehat egy
-# valodi bukas SEM kulonboztetheto meg tole. A nyeses mostantol elszigetelve fut,
-# es ha elbukik, azt NAPLOZZA, nem pedig a mentes eredmenyet hazudja el.
-# ELOSZOR UJRAPROBALJUK, ES CSAK UTANA PANASZKODUNK (2026-08-28). A 03:40-es futas
-# ugyanabban a masodpercben jelentette a listazas bukasat, amelyikben a friss csomag
-# kikerult: a Proton file-provider mappa epp szinkronizalt. Percekkel kesobb ugyanaz a
-# parancs hibatlanul futott. Egy ilyen atmeneti bukasra kiadott figyelmeztetes ROSSZABB
-# a semminel: minden ejjel megjelenik, senki nem nezi meg, es amikor egyszer VALODI lesz,
-# ugyanugy nez ki. Harom proba, kozottuk szunet; ha mind elbukik, AKKOR szolunk.
-REGIEK=""
-NYESES_OK=0
-for _proba in 1 2 3; do
-  if REGIEK="$(ls -t "${PROTON}"/claudeclaw-*.tar.gz.enc 2>/dev/null | tail -n +$((KEEP+1)))"; then
-    NYESES_OK=1
-    break
-  fi
-  sleep 5
-done
-if [[ "$NYESES_OK" -eq 0 ]]; then
-  log "FIGYELEM: a nyeses listazasa HAROM probara sem sikerult (a mentes maga rendben van)"
-  REGIEK=""
-fi
-if [[ -n "$REGIEK" ]]; then
-  while IFS= read -r r; do
-    [[ -n "$r" ]] || continue
-    rm -f "$r" && log "nyesve: $(basename "$r")" || log "FIGYELEM: nem sikerult nyesni: $(basename "$r")"
-  done <<< "$REGIEK"
-fi
-
-# A kilepesi kod MOST MAR a mentes eredmenyet jelenti, nem a takaritasét.
+# A kilepesi kod a mentes eredmenyet jelenti. (A nyeses 2026-09-18 ota a feltoltes ELE
+# kerult; ott sem befolyasolja a kilepesi kodot, mert vegig `if`-agakban fut.)
 exit 0

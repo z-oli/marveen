@@ -52,8 +52,15 @@ case "$ACTION" in
     mv "$SRC" "$LIVE/$NAME"
     echo "Élesítve: $LIVE/$NAME"
     bash "$REPO_ROOT/scripts/skill-index.sh" >/dev/null 2>&1 || true
+    # MINDKET szintet frissiteni kell. Eddig csak a globalis index kapott
+    # ujrageneralast, az agens-specifikus MERGED index (<repo>/.claude/skills/)
+    # nem -- pedig a heartbeat eljarasa kifejezetten azt mondja, hogy ha az
+    # letezik, eleg AZT nezni. Igy egy frissen elesitett skill benne volt a
+    # globalis indexben, de lathatatlan maradt abban, amit tenylegesen olvasok.
+    # 2026-08-17-en a mentor-anyagbol-checklista elesitesenel derult ki.
+    bash "$REPO_ROOT/scripts/skill-index.sh" "$REPO_ROOT" >/dev/null 2>&1 || true
     python3 "$REPO_ROOT/scripts/integrity-manifest.py" --accept >/dev/null 2>&1 || true
-    echo "Index és integritás-alapállapot frissítve."
+    echo "Index (globalis + agens) és integritás-alapállapot frissítve."
     ;;
   --drop)
     rm -rf "$SRC"
