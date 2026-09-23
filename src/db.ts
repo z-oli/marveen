@@ -461,6 +461,7 @@ export function initDatabase(dbPathOverride?: string): void {
       attachment_kind TEXT,
       attachment_file_id TEXT,
       reply_to_message_id TEXT,
+      source TEXT,
       UNIQUE(agent_id, chat_id, direction, message_id)
     )
   `)

@@ -91,7 +91,13 @@ def main():
     # question is simply never surfaced. The reply guard died exactly this way
     # for ten days (#1028).
     chat_id, message_id, text, ts, created_at, att_kind, att_file_id = oq[:7]
-    source = oq[7] if len(oq) > 7 else None
+    # A csatorna NEM a tuple vegerol jon (2026-09-23): ugyanaz a prefix-szerzodes
+    # (HOOKARITAS821) mondja ki, hogy a veg szelesedhet, tehat az `oq[7]` egy uj
+    # oszloptol NEMAN mas erteket adna, es a drain a rossz csatornara valaszolna.
+    try:
+        source = ledger_lib.open_question_source(agent_id)
+    except Exception:
+        source = None
 
     # GRACE: skip a fresh inbound the agent may be answering right now.
     try:
