@@ -54,9 +54,22 @@ function sliceShellFn(src: string, name: string): string {
   return src.slice(start, i)
 }
 
+// Two accepted step-marker shapes (2026-09-23). Upstream marks a step with a
+// bare `INSTALL_STEP="x"` assignment; this fork's headless-install contract
+// (INSTWIZ1) calls `set_step "x"`, which assigns the SAME variable and then
+// emits the machine-readable MARVEEN_PROGRESS line the contract requires. The
+// wrapper cannot be flattened back into a plain assignment without losing the
+// progress protocol, so the locator accepts either form. What this helper is
+// actually for -- slicing one step's body out of the installer -- is unchanged.
+function stepMarker(src: string, step: string): number {
+  const assign = src.indexOf(`INSTALL_STEP="${step}"`)
+  if (assign >= 0) return assign
+  return src.indexOf(`set_step "${step}"`)
+}
+
 function stepBlock(src: string, step: string, nextStep: string): string {
-  const start = src.indexOf(`INSTALL_STEP="${step}"`)
-  const end = src.indexOf(`INSTALL_STEP="${nextStep}"`)
+  const start = stepMarker(src, step)
+  const end = stepMarker(src, nextStep)
 
   if (start < 0 || end < 0 || end <= start) throw new Error(`step ${step} not found`)
 
