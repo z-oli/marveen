@@ -112,6 +112,14 @@ function runNpmInstallStep(): { code: number; out: string; nodes: string[] } {
     'ok() { echo "ok: $*"; }',
     'warn() { echo "warn: $*"; }',
     'fail() { echo "fail: $*"; exit 9; }',
+    // This fork marks steps with set_step (see stepMarker above), which also
+    // emits the headless contract's MARVEEN_PROGRESS line. The slice therefore
+    // opens with a call to it, so the harness needs the stub the way it already
+    // needs ok/warn/fail -- otherwise the step dies on line 1 and the measure
+    // reports "npm install never ran" for a reason that has nothing to do with
+    // which node npm resolved.
+    'set_step() { :; }',
+    'emit_progress() { :; }',
     `INSTALL_DIR="${dir}"`,
     `PATH="${generic}:/usr/bin:/bin"`,
     // brew reports the fake keg, the way it does on a machine that has node@22.
