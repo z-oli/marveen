@@ -64,7 +64,7 @@ KET BUKTATO A PATH-BAN ES A KAPCSOLOKBAN, MINDKETTO MERVE 2026-08-30-an:
 mappaban CSAK a SKILL.md van, `scripts/` alkonyvtar NINCS. A megszokott reflex
 (`~/.claude/skills/<nev>/scripts/...`) `No such file or directory`-vel elszall, es
 konnyu masodszor is ugyanoda nyulni. A futtathato kod a REPOBAN el:
-`/Users/zoli/marveen/seed-skills/fleet-helper/scripts/fleet.py` -- ezt hasznald abszolut
+`{{INSTALL_DIR}}/seed-skills/fleet-helper/scripts/fleet.py` -- ezt hasznald abszolut
 uton, vagy a fenti `P=` relativ alakot a repo gyokerebol.
 
 *** 2. ISMERETLEN KAPCSOLOT A CLI NEM UTASIT VISSZA, HANEM ESCAPE-EL. *** A `mdv2`

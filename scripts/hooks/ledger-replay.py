@@ -146,7 +146,12 @@ def _build_output(transcript, open_q, owner):
         # hook would die, and the fresh session would start with NO context --
         # fail-open, the silence looks like a calm start.
         chat_id, message_id, text, ts, att_kind, att_file_id = open_q[:6]
-        source = open_q[6] if len(open_q) > 6 else None
+        # A csatorna NEM a tuple vegerol jon (2026-09-23): egy ujabb szelesedes
+        # nemán mas erteket adna, es a replay a rossz valasz-eszkozt nevezne meg.
+        try:
+            source = ledger_lib.open_question_source(agent_id)
+        except Exception:
+            source = None
         tool = ledger_lib.reply_tool_for(source)
         label = ledger_lib.provider_label(source)
         snippet = _snippet(text, _max_snippet())

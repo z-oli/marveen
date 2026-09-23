@@ -271,6 +271,7 @@ export function initDatabase(dbPathOverride?: string): void {
       attachment_kind TEXT,
       attachment_file_id TEXT,
       reply_to_message_id TEXT,
+      source TEXT,
       UNIQUE(agent_id, chat_id, direction, message_id)
     )
   `)
@@ -278,9 +279,11 @@ export function initDatabase(dbPathOverride?: string): void {
   // Migration for pre-existing DBs: transcript-less voice/video_note inbounds
   // keep their attachment identity so a respawned session can still download
   // and transcribe them; reply_to_message_id lets an inbound quote be
-  // retraced after the fact (df3b48a7) (mirrors _MIGRATION_COLUMNS in
-  // scripts/hooks/ledger_lib.py).
-  for (const col of ['attachment_kind', 'attachment_file_id', 'reply_to_message_id']) {
+  // retraced after the fact (df3b48a7); `source` names the channel the inbound
+  // came from (`plugin:<provider>:<server>`), added when Discord joined Telegram:
+  // without it an "answer this" directive names the wrong reply tool (mirrors
+  // _MIGRATION_COLUMNS in scripts/hooks/ledger_lib.py).
+  for (const col of ['attachment_kind', 'attachment_file_id', 'reply_to_message_id', 'source']) {
     const cols = db.prepare("PRAGMA table_info(conversation_log)").all() as { name: string }[]
     if (!cols.some(c => c.name === col)) {
       db.exec(`ALTER TABLE conversation_log ADD COLUMN ${col} TEXT`)

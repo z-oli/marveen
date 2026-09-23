@@ -73,6 +73,10 @@ const EXEMPT: Record<string, string> = {
     'legacy predecessor of channel-image-resize.sh; only its old installer migration path named it, and since #1305 that installer is a no-op stub -- kept pending a maintainer decision to remove it',
   'browser-content-notice.py':
     'OPT-IN by construction (BROWSERNOTICE920): it envelopes browser-MCP / WebSearch payloads as untrusted content, and an install without a browser MCP server gains nothing from it. Wiring it here would fire it on every fleet member, most of which have no browser. Operators add it to their own PostToolUse hooks -- the procedure is in docs/security-hardening.md.',
+  'outbound-data-gate.mjs':
+    'HOST-LOCAL wiring (2026-09-23): this install registers it in the host ~/.claude/settings.json on PreToolUse/Bash, behind a versioned node@22 interpreter check -- outside this corpus, the same shape as mio-orszem-precheck.sh below. NOT seeded on purpose: it is this fork\'s own egress guard. KNOWN NARROWING, recorded rather than hidden: because the wiring is host-local, it protects the MAIN agent only; a newly seeded agent runs without it. Removing this entry is the signal that it was wired into a seeding surface.',
+  'mcp-write-gate.mjs':
+    'HOST-LOCAL wiring (2026-09-23): registered in the host ~/.claude/settings.json on PreToolUse with matcher mcp__.*, behind the same node@22 interpreter check. Same narrowing as outbound-data-gate.mjs above: main agent only, seeded agents unprotected.',
   'mio-orszem-precheck.sh':
     'scheduler preCheck for the HOST-LOCAL marveen-io-kozosseg-orszem task (ORSICTX912): the mio community sentinel is this install\'s own and deliberately NOT seeded (a repo seed would ship it to every customer install), so its registration lives in the host ~/.claude/scheduled-tasks task-config -- outside this corpus by design. Wiring is gated on the ORSICTX912 activation order (host restart -> verify -> merge -> build+restart); the hermetic fail-direction tests are scripts/__tests__/mio-orszem-precheck.test.py.',
 }

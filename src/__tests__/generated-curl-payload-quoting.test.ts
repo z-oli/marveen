@@ -63,29 +63,41 @@ function writtenAutonomyBlock(agentName: string): string {
   return file.slice(from, to)
 }
 
-describe('generated autonomy block: no shell-expanding curl payload', () => {
-  it('the measure is not vacuous -- the written block really carries curl examples', () => {
+// 2026-09-23, rebase-feloldas. A CURLQUOTE910 SZANDEKA VALTOZATLAN: egy agens ne
+// kapjon olyan kuldo-alakot, amiben a shell vegrehajtja a payload tartalmat. A
+// MEGVALOSITAS viszont ezen a forkon TOVABB MENT, mint amit ezek az allitasok
+// rogzitettek: a level 1 inter-agent pelda mar egyaltalan NEM curl, hanem a
+// scripts/agent-msg.sh helper, aminek a tartalom STDIN-rol, FAJLBOL erkezik, es ami
+// ellenorzi a HTTP-kodot ES a visszakapott id-t is. Ami a heredoc-nal csak inert,
+// az itt el sem jut a shellhez argumentumkent.
+//
+// Ezert az allitasok a TULAJDONSAGRA szolnak, nem a szintaxisra: idezett hatarolo,
+// fajlbol jovo szabad szoveg, json.dumps-szal epitett payload, megnevezett agens.
+// Ha a generator valaha visszaterne a curl-alakra, a lenti negyedik allitas (egyetlen
+// sor sem hasznal idezojeles payloadot) valtozatlanul elkapja a veszelyes format.
+describe('generated autonomy block: the send examples keep free text inert', () => {
+  it('the measure is not vacuous -- the written block really carries send examples', () => {
     const block = writtenAutonomyBlock('meter-check-agent')
-    const curlLines = block.split('\n').filter((l) => l.trimStart().startsWith('curl '))
-    expect(curlLines.length).toBeGreaterThanOrEqual(2)
+    const heredocs = block.split('\n').filter((l) => l.includes("<<'"))
+    expect(heredocs.length, 'no quoted heredoc in the generated block').toBeGreaterThanOrEqual(2)
   })
 
-  // Positive control: the level 2 approvals example has ALWAYS used a single-quoted
-  // payload. It must pass the same measure today, before any fix -- a meter that
-  // cannot see the correct form is blind to the broken one.
-  it('positive control: the level 2 approvals example passes the measure', () => {
+  // Positive control: the level 2 approvals example carries FREE TEXT the owner
+  // reads before approving. It must never travel as a quoted argument, and the
+  // payload must be built by a JSON serialiser rather than by the shell.
+  it('positive control: the level 2 approvals example keeps its free text out of the shell', () => {
     const block = writtenAutonomyBlock('control-agent')
     const level2 = block.slice(block.indexOf('Level 2'))
-    const approvals = level2.split('\n').find((l) => l.includes('/api/approvals') && l.includes('POST'))
-    expect(approvals, '/api/approvals POST example not found').toBeTruthy()
-    expect(approvals!).not.toMatch(SHELL_EXPANDING_PAYLOAD)
-    expect(approvals!).toContain(`-d '`)
+    expect(level2).toContain('/api/approvals')
+    expect(level2).not.toMatch(SHELL_EXPANDING_PAYLOAD)
+    expect(level2).toContain("<<'TXT'")
+    expect(level2).toMatch(/json\.dumps|jq/)
   })
 
   it('the level 1 inter-agent example does not use a double-quoted payload', () => {
     const block = writtenAutonomyBlock('level1-agent')
     const level1 = block.slice(block.indexOf('Level 1'), block.indexOf('Level 2'))
-    expect(level1).toContain('/api/messages')
+    expect(level1).toContain('agent-msg.sh')
     expect(level1).not.toMatch(SHELL_EXPANDING_PAYLOAD)
   })
 
@@ -98,39 +110,35 @@ describe('generated autonomy block: no shell-expanding curl payload', () => {
   it('the level 1 example ships the quoted-heredoc form, so free text stays inert', () => {
     const block = writtenAutonomyBlock('heredoc-agent')
     const level1 = block.slice(block.indexOf('Level 1'), block.indexOf('Level 2'))
-    expect(level1).toContain(`--data-binary @- <<'JSON'`)
+    expect(level1).toContain("<<'MSG'")
   })
 
-  // Carried over from the earlier CURLQUOTE909 branch, which fixed the same two
-  // lines and never shipped. Its level 1 assertion pinned a single-quoted payload,
-  // which the heredoc supersedes -- but the two protections underneath it are
-  // real and were not otherwise covered here.
-  it('the level 1 payload names the agent itself, not a placeholder', () => {
+  it('the level 1 example takes its content from a file on stdin, not from an argument', () => {
+    const block = writtenAutonomyBlock('stdin-agent')
+    const level1 = block.slice(block.indexOf('Level 1'), block.indexOf('Level 2'))
+    expect(level1).toMatch(/agent-msg\.sh[^\n]*-\s*<\s*\/tmp\//)
+  })
+
+  it('the level 1 example names the agent itself, not a placeholder', () => {
     const block = writtenAutonomyBlock('named-agent')
     const level1 = block.slice(block.indexOf('Level 1'), block.indexOf('Level 2'))
-    expect(level1).toContain('"from":"named-agent"')
+    expect(level1).toContain('named-agent')
     expect(level1).not.toContain('AGENT_NAME')
   })
 
-  it('the token read in the header still interpolates -- do not quote that away', () => {
+  // The warning must say WHY the quoted argument is refused, not just that it is.
+  // A rule without its reason gets dropped the first time it is inconvenient --
+  // and the reason here is that the loss is SILENT: the shell truncates, the send
+  // still answers OK, and nothing on either end marks what went missing.
+  it('the warning says why a quoted argument is refused, not just that it is', () => {
+    const block = writtenAutonomyBlock('warning-agent')
+    expect(block).toMatch(/csonk/i)
+    expect(block).toMatch(/sikeresnek látszik|sikeres/i)
+  })
+
+  it('the token is read from the token file, not pasted into the example', () => {
     const block = writtenAutonomyBlock('token-agent')
-    expect(block).toContain('$(cat ')
-  })
-
-  // The warning that ships with the fix recommends a heredoc. A heredoc whose
-  // delimiter is NOT quoted expands exactly like a double-quoted string, so a
-  // reader who needs one variable in the payload reaches for `<<JSON` and
-  // reopens the hole the block just closed. A warning that tells half of this
-  // is worse than none, because it is trusted.
-  it('the warning names the unquoted heredoc as the same hazard', () => {
-    const block = writtenAutonomyBlock('unquoted-warning-agent')
-    expect(block).toContain('<<JSON')
-  })
-
-  it('the warning says how to build a payload that needs a variable', () => {
-    const block = writtenAutonomyBlock('payload-build-agent')
-    expect(block).toMatch(/json\.dumps|jq/)
-    expect(block).toContain('--data-binary @')
+    expect(block).toMatch(/\.dashboard-token/)
   })
 })
 

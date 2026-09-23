@@ -57,6 +57,26 @@ _MIGRATION_COLUMNS = (
 DEFAULT_SOURCE = "plugin:telegram:telegram"
 
 
+
+def open_question_source(agent_id):
+    """A megvalaszolatlan bejovo CSATORNAJA (`plugin:<provider>:<server>`), vagy None.
+
+    Kulon lekerdezes, nem a tuple vegerol olvasott index (2026-09-23). A
+    prefix-szeletelo szerzodes (HOOKARITAS821) pont azt mondja ki, hogy a tuple
+    VEGE barmikor szelesedhet; egy `oq[7]` alaku olvasas ilyenkor NEM hibat dob,
+    hanem mas erteket ad, es a hivo a rossz valasz-eszkozt valasztja hozza. Egy
+    nevesitett oszlop-lekerdezes ettol fuggetlen."""
+    con = connect()
+    try:
+        row = con.execute(
+            "SELECT source FROM conversation_log"
+            " WHERE agent_id=? AND direction='in' ORDER BY created_at DESC, id DESC LIMIT 1",
+            (str(agent_id),),
+        ).fetchone()
+        return row[0] if row and row[0] else None
+    finally:
+        con.close()
+
 def reply_tool_for(source):
     """The MCP reply tool that can answer an inbound from `source`.
     "plugin:discord:discord" -> "mcp__plugin_discord_discord__reply".
@@ -387,7 +407,13 @@ def open_question_with_age(agent_id):
 def open_question(agent_id):
     """The most recent inbound with NO later outbound (the unanswered question),
     or None. Returns (chat_id, message_id, text, ts, attachment_kind,
-    attachment_file_id, source)."""
+    attachment_file_id).
+
+    A `source` SZANDEKOSAN NINCS BENNE (2026-09-23): a tuple VEGEROL olvasni egy
+    mezot pont az a mozdulat, ami ellen a prefix-szeletelo szerzodes (HOOKARITAS821)
+    vedekezik. Ha a with_age tuple ujra szelesedik, az `oq[7]` NEMAN mas erteket ad
+    vissza source-kent. Aki a csatornat akarja tudni, hivja az open_question_source()-t:
+    az sajat, nevesitett lekerdezes, tehat nem csuszik el egy uj oszloptol.""" 
     oq = open_question_with_age(agent_id)
     if not oq:
         return None
@@ -396,5 +422,4 @@ def open_question(agent_id):
     # every caller that wraps only the open_question() call in try/except
     # would read the failure as "ledger unavailable" -- fail-open, silently.
     chat_id, message_id, text, ts, _created_at, att_kind, att_file_id = oq[:7]
-    source = oq[7] if len(oq) > 7 else None
-    return (chat_id, message_id, text, ts, att_kind, att_file_id, source)
+    return (chat_id, message_id, text, ts, att_kind, att_file_id)
