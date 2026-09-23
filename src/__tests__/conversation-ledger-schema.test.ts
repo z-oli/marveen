@@ -32,7 +32,11 @@ describe('conversation_log schema: db.ts migration == ledger_lib.py (no drift)',
   it('the column sets are identical and complete', () => {
     const a = logColumns(dbts).sort()
     const b = logColumns(lib).sort()
-    expect(a).toEqual(['agent_id', 'attachment_file_id', 'attachment_kind', 'chat_id', 'created_at', 'direction', 'id', 'message_id', 'reply_to_message_id', 'text', 'ts'])
+    // `source` (2026-09-18, Discord co-listen): the channel an inbound arrived on.
+    // The list is a snapshot, so a legitimately added column belongs here -- the
+    // assertion that actually guards against drift is the next line, which pins
+    // db.ts and ledger_lib.py to EACH OTHER rather than to this literal.
+    expect(a).toEqual(['agent_id', 'attachment_file_id', 'attachment_kind', 'chat_id', 'created_at', 'direction', 'id', 'message_id', 'reply_to_message_id', 'source', 'text', 'ts'])
     expect(b).toEqual(a)
   })
 
