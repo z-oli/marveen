@@ -113,7 +113,17 @@ describe('both installers wire the probe after the telegram token prompt', () =>
     ['install-linux.sh', LINUX],
   ])('%s defines the probe and calls it right after the prompt', (_name, src) => {
     expect(src).toContain('probe_telegram_token() {')
-    const promptIdx = src.indexOf('prompt_telegram_token)" BOT_TOKEN')
+    // Two accepted prompt shapes (2026-09-23). Upstream reads the token with a
+    // bare `read -rp "$(_t prompt_telegram_token)" BOT_TOKEN`; this fork's
+    // headless-install contract (INSTWIZ1) routes every prompt through
+    // prompt_or_preset, whose interactive path is byte-identical to the read it
+    // replaces but which also accepts a MARVEEN_* preset in non-interactive
+    // mode. The assertion that matters is the ORDER (probe right after the
+    // prompt), not which of the two syntaxes asked the question.
+    const promptIdx = Math.max(
+      src.indexOf('prompt_telegram_token)" BOT_TOKEN'),
+      src.indexOf('prompt_or_preset BOT_TOKEN "$(_t prompt_telegram_token)"'),
+    )
     expect(promptIdx).toBeGreaterThan(-1)
     const after = src.slice(promptIdx, promptIdx + 200)
     expect(after).toContain('probe_telegram_token "$BOT_TOKEN"')
