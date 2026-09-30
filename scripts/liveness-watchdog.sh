@@ -36,6 +36,14 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STORE="$REPO_ROOT/store"
+# NOTE: this file is ALSO the "am I running at all" marker. Every exit path below
+# rewrites it (ok / down variants), so its mtime is the timestamp of the last
+# completed run -- the 600s launchd interval means a healthy system keeps it under
+# ~10 minutes old. The .log next to it only gets a line on an EVENT (notified /
+# kickstart / recovered / still down), so weeks of silence there look exactly like
+# weeks of not running. If you want to know whether the watchdog is alive, stat
+# this file; do not read the log. (Measured 2026-09-20: the log had been silent
+# since 08-25 while this file was 2 minutes old.)
 STATE="$STORE/.liveness-state"
 BTIME_STATE="$STORE/.last-btime"
 # Which boot we have ALREADY told the owner about. Separate from the baseline
@@ -61,9 +69,22 @@ PORT="${PORT:-3420}"
 # than an install that stays silent. Missing id -> log only.
 CHAT_ID="${MARVEEN_ALERT_CHAT_ID:-$(read_env MARVEEN_ALERT_CHAT_ID "$REPO_ROOT/.env")}"
 TOKEN="$(read_env TELEGRAM_BOT_TOKEN "$TG_ENV")"
+# 2026-09-26: Discord is the owner's main channel (warm 1080). Discord first,
+# Telegram only as the fallback when the Discord send fails or is unconfigured.
+DC_ENV="${DISCORD_ENV:-$HOME/.claude/channels/discord/.env}"
+DC_TOKEN="$(read_env DISCORD_BOT_TOKEN "$DC_ENV")"
+DC_CHANNEL="${MARVEEN_ALERT_DISCORD_CHANNEL_ID:-$(read_env MARVEEN_ALERT_DISCORD_CHANNEL_ID "$REPO_ROOT/.env")}"
+. "$REPO_ROOT/scripts/lib/send-discord.sh"
 
 notify() {
   local msg="$1"
+  if [[ -n "$DC_TOKEN" && -n "$DC_CHANNEL" ]]; then
+    if send_discord_message "$DC_TOKEN" "$DC_CHANNEL" "$msg" 2>>"$LOG"; then
+      log "notified (discord): ${msg%%$'\n'*}"
+      return 0
+    fi
+    log "discord notify FAILED, falling back to Telegram"
+  fi
   if [[ -z "$TOKEN" || -z "$CHAT_ID" ]]; then
     log "NOTIFY SKIPPED (missing token or MARVEEN_ALERT_CHAT_ID): $msg"
     return 0

@@ -58,7 +58,7 @@ DEFAULTS = {
         "Modulzáró vizsgát írásban és szóban, 80 óra után objektív szintvisszamérést",
         "A felnőttképzési adminisztráció teljes menedzselését (FAR)",
     ],
-    "ibc_intro": "Az IBC Nyelviskola 15 éve a vállalati nyelvoktatás megbízható partnere. Szakértelmünk a kommunikáció-központú, munkakör-specifikus nyelvi fejlesztésben rejlik, amelyet rugalmas oktatási formákkal és mérhető eredményekkel támogatunk.",
+    "ibc_intro": "Az IBC Nyelviskola 20 éve a vállalati nyelvoktatás megbízható partnere. Szakértelmünk a kommunikáció-központú, munkakör-specifikus nyelvi fejlesztésben rejlik, amelyet rugalmas oktatási formákkal és mérhető eredményekkel támogatunk.",
     "kovetkezo_lepesek": ["Igényfelmérés és szintfelmérés", "Csoportkialakítás",
                           "Képzési terv egyeztetés", "Képzés indítás"],
     # A vezetoi osszefoglalo "Az ar tartalmazza:" sora. Korabban be volt egetve a
@@ -66,6 +66,20 @@ DEFAULTS = {
     # Geodis: dijmentes angol bemutato ora), a tobbi ajanlat valtozatlan maradasa mellett.
     # Rovid legyen: egy sorban all a lapon, hosszan tullogna.
     "ar_tartalmazza_rovid": "ROI riport, oktatásszervezés, szintfelmérés",
+    # A kedvezmeny idobeli/mennyisegi korlatja. Zoli kerese 2026-09-23: MINDEN ajanlatban
+    # legyen ott, mert a szerzodes is kikoti ("a megrendelt oraszamok kifutasaig
+    # biztositjuk"), es eddig csak ott allt -- az ajanlatbol hianyzott.
+    # Csak akkor jelenik meg, ha van kedvezmeny. Ures ertek = elhagyva.
+    # Dij-logo a boritora (jobb alsó sarok). Ures alapertek = nincs kep, a tobbi ajanlat
+    # valtozatlan marad. Ertéke fajl-ut: abszolut, vagy az assets/ mappahoz relativ.
+    # Zoli kerese 2026-09-23, a KBC-ajanlathoz: "Az Ev Felnottkepzoje 2026" dij logoja
+    # (store/alairas-email/dij-logo/AzEV_FK_logo_teljes_vagott.png).
+    "dij_logo": "",
+    "kedvezmeny_korlat": "A kedvezmény a megrendelt óraszám erejéig érvényes.",
+    # A vezetoi osszefoglaloban a teljes mondat 3,9 mm-t vitt es 0,2 mm-rel TULLOGATTA a
+    # lapot (merve 2026-09-23, ENCO). Ott a kedvezmeny-cimke MELLETT all, tehat a rovid
+    # alak is egyertelmu. Ha ures, a compact valtozatbol elmarad a korlat.
+    "kedvezmeny_korlat_rovid": "a megrendelt óraszám erejéig",
     # A bemutatoora NYELVI jelzoje. Alapertelmezesben ures, tehat "bemutatoorat biztositunk".
     # Tobbnyelvu ajanlatnal, ahol a bemutatot csak egy nyelven vallaljuk, ide jon a nyelv
     # SZOKOZZEL a vegen: "angol " -> "angol bemutatoorat biztositunk" (2026-08-14, Geodis).
@@ -166,6 +180,16 @@ def logo_data_uri():
         return "data:image/png;base64," + base64.b64encode(fh.read()).decode()
 
 
+def kep_data_uri(ut):
+    """Barmilyen kep beagyazasa data URI-kent. Abszolut utat vagy assets/-relativat fogad."""
+    if not ut:
+        return ""
+    teljes = ut if os.path.isabs(ut) else os.path.join(HERE, "assets", ut)
+    kiterjesztes = os.path.splitext(teljes)[1].lstrip(".").lower() or "png"
+    with open(teljes, "rb") as fh:
+        return f"data:image/{kiterjesztes};base64," + base64.b64encode(fh.read()).decode()
+
+
 def footer(page_no, total):
     return (f'<div class="footer"><span>{KAPCSOLAT["email"]} &nbsp;|&nbsp; '
             f'{KAPCSOLAT["telefon"]} &nbsp;|&nbsp; {KAPCSOLAT["web"]}</span>'
@@ -203,9 +227,11 @@ def pricecard(d, compact=False):
             else:
                 p.append(f'<div class="base">Ár:<b>{e(a["ar"])}</b></div>')
                 if a.get("kedvezmeny"):
+                    korlat = ""  # a compact kartyaban nincs hely, lasd a note-i sort
+                    kiegeszites = f' &nbsp;·&nbsp; {e(korlat)}' if korlat else ""
                     p.append('<div class="final">Kedvezményes ár:'
                              f'<b>{e(a["kedvezmenyes_ar"])}</b>'
-                             f'<span class="dlbl">{e(a["kedvezmeny"])}</span></div>')
+                             f'<span class="dlbl">{e(a["kedvezmeny"])}{kiegeszites}</span></div>')
             p.append("</div></div>")
         else:
             p = ['<div class="pricecard">',
@@ -233,6 +259,12 @@ def pricecard(d, compact=False):
 # --------------------------------------------------------------------------- oldalak
 
 def p1_borito(d, logo):
+    # A dij-logo a borito also savjanak JOBB oldalara kerul: ott a lapon tenylegesen ures hely
+    # van (a kapcsolati adatok balra allnak), tehat semmit nem tol el es nem novel lapot.
+    dij_uri = kep_data_uri(d.get("dij_logo", ""))
+    dij = (f'<img src="{dij_uri}" alt="Az Év Felnőttképzője 2026" '
+           'style="position:absolute;right:18mm;bottom:13mm;width:34mm;height:auto;z-index:1">'
+           ) if dij_uri else ""
     return f"""
 <div class="page">
   <div class="cover-top">
@@ -243,7 +275,7 @@ def p1_borito(d, logo):
     <div class="cover-for">{e(d['nevelo'])} {e(d['ceg'])} részére</div>
   </div>
   <div class="cover-bottom">
-    <div class="warmblob"></div>
+    <div class="warmblob"></div>{dij}
     <div class="inner">
       <div class="cover-label">Elérhetőségeink:</div>
       <div class="cover-contact">{KAPCSOLAT['telefon']}</div>
@@ -261,10 +293,10 @@ def p2_bemutatkozas(d):
     return f"""
 <div class="page"><div class="body">
   <h1 class="page-title">IBC Nyelviskola<span class="sub">a vállalati nyelvoktatás szakértője</span></h1>
-  <p class="lead">Több mint 15 éves tapasztalattal, meghatározó szereplőként a vállalati
+  <p class="lead">Több mint 20 éves tapasztalattal, meghatározó szereplőként a vállalati
   nyelvoktatás területén az IBC Nyelviskola folyamatosan fejlődik és bővül. Jelenleg több mint
   650 aktív nyelvtanfolyamot vezetünk, közel 1200 résztvevő számára.</p>
-  <p class="lead">Erős nagyvállalati referenciáink és 15+ év tapasztalatunk biztosítja, hogy
+  <p class="lead">Erős nagyvállalati referenciáink és 20+ év tapasztalatunk biztosítja, hogy
   {e(d['nevelo'])} {e(d['ceg'])} számára is kiemelt minőségű nyelvi képzést tudjunk nyújtani, mérhető
   eredményekkel és teljes körű támogatással.</p>
 
@@ -279,7 +311,7 @@ def p2_bemutatkozas(d):
   <div class="stats">
     {stat('650+', 'aktív tanfolyam,<br>közel 1200 résztvevő')}
     {stat('130+', 'magasan képzett<br>nyelvoktató')}
-    {stat('15+ év', 'vállalati nyelvoktatási<br>tapasztalat')}
+    {stat('20+ év', 'vállalati nyelvoktatási<br>tapasztalat')}
     {stat('94%', 'résztvevői<br>elégedettség', green=True)}
   </div>
 
@@ -409,6 +441,8 @@ def p5_minoseg(d):
   <div class="stats">
     {stat('130+', 'képzett nyelvtanár<br>országos hálózatunkban')}
     {stat('C2 szint', 'tökéletes nyelvtudás,<br>nyelvtanári diploma')}
+    <!-- 15+ SZANDEKOS: ez az OKTATOK atlag tapasztalata, NEM a ceg kora.
+         A ceg 20 eves (2026-09-22, Zoli dontese). Ne ird at 20-ra. -->
     {stat('15+ év', 'átlag tapasztalat<br>a felnőttképzésben')}
     {stat('94%', 'elégedettség<br>visszajelzések alapján', green=True)}
   </div>
@@ -531,6 +565,10 @@ def p8_digitalis(d):
 
 def p9_arazas(d, logo):
     tartalom = "".join(f"<li>{e(x)}</li>" for x in d["dij_tartalma"])
+    # A kedvezmeny-korlat csak akkor jelenik meg, ha valamelyik arnal VAN kedvezmeny.
+    korlat = d.get("kedvezmeny_korlat", "")
+    van_kedvezmeny = any(a.get("kedvezmeny") for a in d.get("arak", []))
+    kedvezmeny_korlat_mondat = f" {e(korlat)}" if (korlat and van_kedvezmeny) else ""
     return f"""
 <div class="page">
   <div class="bar">Nyelvi képzés árajánlat {e(d['nevelo'])} {e(d['ceg'])} részére</div>
@@ -560,7 +598,7 @@ def p9_arazas(d, logo):
     <div class="warmbox" style="margin-top:2.5mm">
       <b>Fizetés módja:</b> {e(d['fizetes'])}<br>
       <span style="color:var(--red);font-style:italic">Áraink {e(d['ervenyesseg'])}-ig
-      érvényesek. A nyelvi képzések tárgyi adómentesek.</span>
+      érvényesek. A nyelvi képzések tárgyi adómentesek.{kedvezmeny_korlat_mondat}</span>
     </div>
     
   </div>{footer(9, 10)}</div>"""
@@ -594,8 +632,13 @@ def p10_lepesek(d):
 
 
 def exec_summary(d, logo):
+    # A kedvezmeny-korlat rovid alakja a lablec-sorba megy, nem a kedvezmeny-cimke melle:
+    # ott 3,9 mm-t vitt es tullogatta a lapot (merve 2026-09-23, ENCO).
+    _korlat = d.get("kedvezmeny_korlat_rovid", "")
+    _van_kedv = any(a.get("kedvezmeny") for a in d.get("arak", []))
+    korlat_rovid_mondat = f" &nbsp;|&nbsp; A kedvezmény {e(_korlat)} érvényes." if (_korlat and _van_kedv) else ""
     stats = (stat("650+", "Kurzus") + stat("130+", "Oktató")
-             + stat("15+", "Év tapasztalat") + stat("94%", "Elégedettség", green=True))
+             + stat("20+", "Év tapasztalat") + stat("94%", "Elégedettség", green=True))
     svc = "".join(f'<div class="it"><b>{e(t)}</b><span>{e(s)}</span></div>'
                   for t, s in d["szolgaltatasok"])
     miert = "".join(f"<li>{e(x)}</li>" for x in d["miert_ibc"])
@@ -624,7 +667,7 @@ def exec_summary(d, logo):
     <h2>Áraink</h2>
     {pricecard(d, compact=True)}
     <div class="note-i">Az ár tartalmazza: {e(d['ar_tartalmazza_rovid'])} &nbsp;|&nbsp;
-    {e(d['utemezes'])} &nbsp;|&nbsp; Árak {e(d['ervenyesseg'])}-ig érvényesek.</div>
+    {e(d['utemezes'])} &nbsp;|&nbsp; Árak {e(d['ervenyesseg'])}-ig érvényesek.{korlat_rovid_mondat}</div>
     <div class="darkbox">
       <div class="t">Miért az IBC {e(d['nevelo'])} {e(d['ceg'])} ideális partnere?</div>
       <ul class="checks" style="columns:2;column-gap:8mm">{miert}</ul>

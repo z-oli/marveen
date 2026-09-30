@@ -196,7 +196,10 @@ fi
 if vault_header GEMINI_API_KEY "$WORK/gemini.hdr" x-goog-api-key ''; then
   echo ""
   echo "=== Gemini Review ==="
-  review Gemini https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent \
+  # 2026-09-24 (fork): gemini-2.0-flash was retired 2026-06-01, so a fixed 2.0 URL 404s.
+  # The model is overridable so the next retirement needs no code change.
+  GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
+  review Gemini https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent \
     "$WORK/gemini.hdr" "$WORK/gemini.json" "d['candidates'][0]['content']['parts'][0]['text']" || FAILED=1
   rm -f "$WORK/gemini.hdr"
 else
