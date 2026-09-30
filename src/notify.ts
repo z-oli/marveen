@@ -1,3 +1,4 @@
+import * as config from './config.js'
 import { CHANNEL_PROVIDER, CHANNEL_TOKEN, CHANNEL_CHAT_ID, ALERT_CHAT_ID } from './config.js'
 import { normalizeChatId, resolveAlertOwnerChat } from './owner-chat.js'
 import { getProvider } from './channel-provider.js'
@@ -72,6 +73,32 @@ export async function deliverWithSlack(
   if (!r.ok || setting('NOTIFY_TELEGRAM') !== '0') await telegram()
 }
 
+// Discord-first alert route (see ALERT_DISCORD_* in config.ts). Read through
+// the namespace inside a try: test files mock config.js without these keys,
+// and a missing mock export throws on access -- that must mean "no route".
+function alertDiscordRoute(): { token: string; channel: string } | null {
+  try {
+    const token = config.ALERT_DISCORD_TOKEN
+    const channel = config.ALERT_DISCORD_CHANNEL_ID
+    return token && channel ? { token, channel } : null
+  } catch {
+    return null
+  }
+}
+
+async function sendViaDiscord(route: { token: string; channel: string }, text: string): Promise<boolean> {
+  const provider = getProvider('discord')
+  try {
+    for (const chunk of provider.splitMessage(provider.formatMessage(text))) {
+      await provider.sendMessage(route.token, route.channel, chunk)
+    }
+    return true
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'Discord ertesites elbukott, Telegram tartalek kovetkezik')
+    return false
+  }
+}
+
 // True when operational alerts go to a chat other than the owner's. Callers
 // must then leave owner/partner conversation content (e.g. a preview of a
 // parked input line) out of the alert text.
@@ -82,6 +109,9 @@ export function alertIsRedirected(): boolean {
 // Operational alert (watchdogs, restarts, stuck sessions). Goes to
 // ALERT_CHAT_ID when it is set, otherwise to the owner chat.
 export async function notifyChannel(text: string): Promise<void> {
+  // Fork: Discord first (2026-09-26); Slack/Telegram stay the fallback chain.
+  const route = alertDiscordRoute()
+  if (route && (await sendViaDiscord(route, markIfTestRun(text)))) return
   return deliverWithSlack('alert', text, () => {
     const alertChat = normalizeChatId(ALERT_CHAT_ID)
     if (alertChat) return sendToChat(alertChat, text)
@@ -124,6 +154,10 @@ function signalOwnerChatMissing(text: string, reason: string): void {
 // Owner-facing content (heartbeat digest, security events): always the owner
 // chat, never rerouted by ALERT_CHAT_ID.
 export async function notifyOwner(text: string): Promise<void> {
+  // Fork: the owner's main channel is Discord (2026-09-26), so owner content
+  // goes there first too; Slack/Telegram stay the fallback.
+  const route = alertDiscordRoute()
+  if (route && (await sendViaDiscord(route, markIfTestRun(text)))) return
   return deliverWithSlack('owner', text, () => telegramOwner(text))
 }
 

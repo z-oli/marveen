@@ -67,7 +67,12 @@ import json, sys
 prompt = sys.stdin.read()
 print(json.dumps({'contents': [{'parts': [{'text': prompt}]}]}))
 " <<< "$PROMPT")"
-  curl -sf "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_KEY" \
+  # 2026-09-24: a `gemini-2.0-flash` 2026-06-01-en VEGLEG LEALLT, tehat ez a hivas ma
+  # biztosan 404-et adna. A branch egyebkent MA SEM FUT, mert a vaultban nincs
+  # GEMINI_API_KEY (merve ugyanaznap) -- vagyis lappango hiba volt, nem elo.
+  # A modell kivulrol allithato, hogy a kovetkezo leallasnal ne kelljen kodot nyulni:
+  GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
+  curl -sf "https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=$GEMINI_KEY" \
     -H "Content-Type: application/json" \
     -d "$PAYLOAD" \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['candidates'][0]['content']['parts'][0]['text'])"

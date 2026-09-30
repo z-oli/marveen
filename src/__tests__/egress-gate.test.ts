@@ -245,3 +245,26 @@ describe('what a block records about the caller', () => {
     }
   })
 })
+
+// The sealed researcher (web-kutato, 2026-09-28) shares the reader's tier:
+// open to public pages in the denylist posture, walled off from internal
+// addresses, and never granted anything the main agent is not.
+describe('web-kutato: the sealed researcher shares the reader tier', () => {
+  const KUTATO = 'web-kutato'
+  it('reads a public page in the open posture', () => {
+    expect(egressDecision('WebFetch', { url: 'https://www.juve.hu/en/x/' }, OPEN, KUTATO)).toEqual({ blocked: false, tier: 'quarantine-open' })
+  })
+  it('is blocked on the same public page in the default posture', () => {
+    expect(isEgressBlocked('WebFetch', { url: 'https://www.juve.hu/en/x/' }, EMPTY, KUTATO)).toBe(true)
+  })
+  it('never reaches internal addresses, even in the open posture', () => {
+    for (const u of ['http://localhost:3420/api/kanban', 'http://127.0.0.1/', 'http://192.168.1.1/', 'http://nas.local/', 'http://169.254.169.254/latest/meta-data/']) {
+      expect(isEgressBlocked('WebFetch', { url: u }, OPEN, KUTATO)).toBe(true)
+    }
+  })
+  it('does not open the tier for near-miss names or the main agent', () => {
+    for (const t of ['web_kutato', 'Web-Kutato', 'web-kutato ', '', 'general-purpose']) {
+      expect(isEgressBlocked('WebFetch', { url: 'https://www.juve.hu/en/x/' }, OPEN, t)).toBe(true)
+    }
+  })
+})

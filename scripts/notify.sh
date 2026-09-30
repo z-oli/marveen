@@ -147,6 +147,33 @@ fi
 # truth (NOTIFYVAKSWEEP826) -- this script consumes it, it no longer inlines it.
 . "$SCRIPT_DIR/lib/send-telegram.sh"
 
+# FORK 2026-09-26: Discord is the owner's main channel (warm 1080). Try Discord
+# first; Telegram stays as the fallback so an alert is never lost because one
+# API is down. Callers write Telegram HTML (<b>, <i>, <code>), so it is turned
+# into Discord markdown before sending.
+DC_ENV="${DISCORD_ENV:-$HOME/.claude/channels/discord/.env}"
+DC_TOKEN=$(grep '^DISCORD_BOT_TOKEN=' "$DC_ENV" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"'\r')
+DC_CHANNEL=$(grep '^MARVEEN_ALERT_DISCORD_CHANNEL_ID=' "$ENV_FILE" | head -1 | cut -d= -f2-)
+if [ -n "$DC_TOKEN" ] && [ -n "$DC_CHANNEL" ]; then
+  . "$SCRIPT_DIR/lib/send-discord.sh"
+  DC_MESSAGE=$(NOTIFY_TEXT="$MESSAGE" python3 -c '
+import html, os, re
+t = os.environ["NOTIFY_TEXT"]
+t = re.sub(r"</?b>|</?strong>", "**", t)
+t = re.sub(r"</?i>|</?em>", "*", t)
+t = re.sub(r"</?code>", "`", t)
+t = re.sub(r"</?pre>", "```", t)
+t = re.sub(r"<[^>]+>", "", t)
+print(html.unescape(t), end="")
+')
+  if send_discord_message "$DC_TOKEN" "$DC_CHANNEL" "$DC_MESSAGE"; then
+    echo "Ertesites elkuldve (Discord)."
+    exit 0
+  fi
+  echo "Discord kuldes sikertelen, Telegram tartalek." >&2
+fi
+
+
 if [ "$SEND_TELEGRAM" -eq 0 ]; then
   if [ "$SLACK_RC" -ne 0 ]; then
     echo "Hiba: a Slack-ertesites nem ment ki, es a Telegram-tartalek ki van kapcsolva (NOTIFY_TELEGRAM_FALLBACK=0). Szolj a fo agensnek inter-agent uzenetben. Reszletek: $SLACK_OUT" >&2

@@ -122,6 +122,12 @@ export const ALLOWED_PREFIXES = [
 // sub-agent makes to itself in its prompt; this one is enforcement. Keep them
 // in step -- and when they disagree, this file is the one that decides.
 const QUARANTINE_AGENT_TYPE = 'quarantine-reader'
+// The sealed researcher (2026-09-28, owner-approved): same contract as the
+// reader -- its definition grants WebSearch + WebFetch and nothing else, no
+// shell, no filesystem, no secrets -- so it shares the reader's tier and the
+// reader's deny rules. Its claims are only trusted after
+// scripts/web-idezet-ellenor.py re-fetches the page and finds the quote.
+const READER_AGENT_TYPES = new Set([QUARANTINE_AGENT_TYPE, 'web-kutato'])
 
 // `path` (optional) narrows a domain to the URLs the sub-agent's definition
 // actually promises. Reddit is the reason it exists: the definition allows RSS
@@ -303,7 +309,7 @@ export function egressDecision(
   const url = String(toolInput?.url ?? '')
   if (!url) return { blocked: false, tier: 'no-url' }
 
-  const openReader = String(agentType ?? '') === QUARANTINE_AGENT_TYPE
+  const openReader = READER_AGENT_TYPES.has(String(agentType ?? ''))
     && (runtimeList.quarantinePosture ?? 'allowlist') === 'denylist'
 
   // 0. Reader deny rules, BEFORE every allow path -- in the denylist posture
@@ -356,7 +362,7 @@ export function egressDecision(
   //    (b) anything else -- allowed UNLESS the deny rules catch it. The
   //        re-check is defence in depth: step 0 already refused denied URLs,
   //        and this keeps that true even if someone later reorders the steps.
-  if (String(agentType ?? '') === QUARANTINE_AGENT_TYPE) {
+  if (READER_AGENT_TYPES.has(String(agentType ?? ''))) {
     if (matchesQuarantineDomain(url, runtimeList.quarantineDomains ?? [])) {
       return { blocked: false, tier: 'quarantine' }
     }

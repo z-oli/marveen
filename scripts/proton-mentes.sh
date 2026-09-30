@@ -71,25 +71,45 @@ if [[ -f "$CEL" ]]; then MEGTART=$KEEP; else MEGTART=$((KEEP-1)); fi
 # parancs hibatlanul futott. Egy ilyen atmeneti bukasra kiadott figyelmeztetes ROSSZABB
 # a semminel: minden ejjel megjelenik, senki nem nezi meg, es amikor egyszer VALODI lesz,
 # ugyanugy nez ki. Harom proba, kozottuk szunet; ha mind elbukik, AKKOR szolunk.
-REGIEK=""
-NYESES_OK=0
-for _proba in 1 2 3; do
-  if REGIEK="$(ls -t "${PROTON}"/claudeclaw-*.tar.gz.enc 2>/dev/null | tail -n +$((MEGTART+1)))"; then
-    NYESES_OK=1
-    break
-  fi
-  sleep 5
-done
-if [[ "$NYESES_OK" -eq 0 ]]; then
-  log "FIGYELEM: a nyeses listazasa HAROM probara sem sikerult (a mentes maga rendben van)"
-  REGIEK=""
-fi
-if [[ -n "$REGIEK" ]]; then
-  while IFS= read -r r; do
-    [[ -n "$r" ]] || continue
-    rm -f "$r" && log "nyesve: $(basename "$r")" || log "FIGYELEM: nem sikerult nyesni: $(basename "$r")"
-  done <<< "$REGIEK"
-fi
+# *** A `2>/dev/null` MIATT HAROM HETIG VAKOK VOLTUNK (2026-09-22, Zoli kerdesere merve). ***
+# A nyeses 2026-08-26 ota EGYETLEN ejjel sem futott le: 26 "HAROM probara sem sikerult" sor all
+# a naplóban, es a mappa 18 csomagra hizott a 14 helyett (a 09-18-i 24->14 KEZI nyeses ota negy
+# ej telt el, negy uj csomaggal). A hibauzenetet viszont eldobtuk, tehat a naplo azt mondta meg,
+# HOGY elbukott, azt nem, hogy MIERT -- es a launchd stderr fajlja (store/proton-mentes.err)
+# pont ezert maradt URES. Nyugalmi allapotban, interaktiv shellbol UGYANEZ a parancs hibatlanul
+# fut es pontosan a 4 nyesendo csomagot adja vissza, tehat NEM logikai hiba: a 03:40-es
+# kornyezetben van valami mas (file-provider allapot, TCC, vagy meg nem csatolt almappa).
+# EZERT: a stderr-t MOSTANTOL ELKAPJUK es NAPLOZZUK. A kovetkezo elbukott futas maga mondja meg,
+# mi a baj. Ne vedd vissza a `2>/dev/null`-t, amig a hiba oka ki nem derult.
+# *** ES 2026-09-23 HAJNALBAN KIDERULT. AZ OK: macOS TCC. ***
+# Az elso futas a javitott naplozassal azonnal kiadta: `ls: .../claudeclaw-*.tar.gz.enc:
+# No such file or directory` -- felrevezeto uzenet, mert a mappa LETEZIK es tele van. A glob
+# nem bomlott ki, mert a konyvtar BEOLVASASA tiltott, tehat az ls a literalis mintat kapta.
+# Reprodukalva eldobhato launchd agenttel, ugyanezzel a /bin/bash-sal, ugyanebben a
+# kontextusban (utana eltavolitva):
+#   ls <mappa>                      -> Operation not permitted   (readdir TILTOTT)
+#   test -d <mappa>                 -> IGEN                      (stat MEGY)
+#   test -f <ismert csomag>         -> IGEN                      (stat MEGY)
+#   uj fajl irasa ismert utvonalra  -> OK                        (create/write MEGY)
+#   rm -f <sajat dummy fajl>        -> Operation not permitted   (unlink TILTOTT)
+# A launchd alol inditott /bin/bash-nak nincs Full Disk Access, a ~/Library/CloudStorage
+# pedig TCC-vedett. Ezert sikerul a mentes (uj fajl ismert utvonalra) es bukik a nyeses
+# (listazas + torles) ugyanabban a masodpercben, ugyanabba a mappaba.
+# *** AMI EZZEL KIESIK, MIELOTT BARKI UJRA FELVETNE: a kezenfekvo javitas -- a szkript
+# vezessen sajat nyilvantartast a feltoltott fajlnevekrol, es abbol nyessen readdir nelkul --
+# NEM MUKODNE, mert a TORLES is tiltott. Ezt kulon meg kellett merni; a listazas bukasa
+# onmagaban nem mondta volna meg. ***
+# A KET JARHATO UT (Zoli dontese, kartya cc512a3a): (1) Full Disk Access a /bin/bash-nak,
+# cserebe minden bash szkript megkapja; vagy (2) a nyeses atkerul az agens sajat utemezett
+# feladataba, aminek a kontextusa hozzafer -- a 09-18-i es 09-22-i kezi nyeses igy ment.
+# A `2>/dev/null` TOVABBRA SE kerüljon vissza: ez a naplozas adta meg a valaszt.
+# *** A NYESES 2026-09-23 OTA NEM ITT FUT (Zoli dontese, Discord 1552173032196546661). ***
+# Ok: a fenti TCC-meres. Ebbol a kornyezetbol a listazas ES a torles is tiltott, tehat a
+# nyeses itt NEM javithato meg -- barmilyen ujraprobalkozas csak zajt termel. Atkerult az
+# agens sajat utemezett feladataba (`proton-nyeses`, scripts/proton-nyeses.sh), aminek a
+# kornyezete hozzafer a mappahoz. Ara: a nyeses az agens futasatol fugg; ha az all, a
+# csomagok gyulnek, de A MENTES ATTOL MEG MEGY, es ez a fontosabb.
+# NE tedd vissza ide a nyesest, amig a bash nem kap teljes lemez-hozzaferest.
 
 if [[ -f "$CEL" ]]; then
   log "kihagyva, mar fent van: ${NEV}.enc"

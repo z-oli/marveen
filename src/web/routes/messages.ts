@@ -532,6 +532,25 @@ export async function tryHandleMessages(ctx: RouteContext): Promise<boolean> {
     }
     const agent = url.searchParams.get('agent') || ''
     const status = url.searchParams.get('status') || ''
+    // `status` is in KNOWN_PARAMS, so the validator above waves it through as
+    // supported -- but only 'pending' has an implementation below. Every other
+    // value used to fall to the `else if (agent)` branch and return the
+    // UNFILTERED conversation with HTTP 200: measured on the live endpoint,
+    // ?agent=marveen&status=done gave 200 rows, all of them 'delivered'. That is
+    // the same "MORE than asked for" direction the comment above calls the
+    // expensive one -- a narrower filter answered with a wider set -- except
+    // silently, where the unknown-param case at least fails loudly. Reject it
+    // the same way instead of guessing what the caller meant.
+    const IMPLEMENTED_STATUSES = new Set(['pending'])
+    if (status && !IMPLEMENTED_STATUSES.has(status)) {
+      json(res, {
+        error: 'unsupported status filter',
+        status,
+        supported: [...IMPLEMENTED_STATUSES],
+        hint: 'only "pending" is implemented; omit status to list the conversation',
+      }, 400)
+      return true
+    }
     const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 200)
     const beforeRaw = url.searchParams.get('before')
     const before = beforeRaw !== null ? parseInt(beforeRaw, 10) : undefined

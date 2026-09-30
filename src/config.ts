@@ -435,6 +435,24 @@ export function resolveAlertChatIdSetting(e: Record<string, string | undefined>)
 }
 export const ALERT_CHAT_ID = resolveAlertChatIdSetting(env)
 
+// Owner alert route (2026-09-28, the owner moved his main channel to Discord).
+// The main agent stays bound to CHANNEL_PROVIDER (Telegram co-listen), so
+// flipping that key would rewire the agent itself. Alerts only need a second
+// route: when both values are present, notifyChannel sends to this Discord
+// channel FIRST and falls back to CHANNEL_PROVIDER only if Discord fails --
+// the same order the shell watchdogs use (scripts/lib/send-discord.sh).
+// The bot token lives with the Discord plugin, not in the repo .env.
+export const ALERT_DISCORD_CHANNEL_ID = (env['MARVEEN_ALERT_DISCORD_CHANNEL_ID'] ?? '').trim()
+export const ALERT_DISCORD_TOKEN = (() => {
+  const p = process.env['DISCORD_ENV'] ?? join(process.env['HOME'] ?? '', '.claude', 'channels', 'discord', '.env')
+  try {
+    const line = readFileSync(p, 'utf8').split('\n').find((l) => l.startsWith('DISCORD_BOT_TOKEN='))
+    return line ? line.slice('DISCORD_BOT_TOKEN='.length).trim().replace(/^["']|["']$/g, '') : ''
+  } catch {
+    return ''
+  }
+})()
+
 // Respawn / keep-alive gate.
 // The in-process channel-plugin monitor (main-agent respawn + sub-agent
 // auto-restart) must run on exactly ONE machine. When the same checkout runs
