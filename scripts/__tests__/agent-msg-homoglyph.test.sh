@@ -49,9 +49,11 @@ done
 CY="$(python3 -c 'print(chr(0x43E))')"   # CYRILLIC SMALL LETTER O
 send() {  # send <content-or-dash> [extra env assignments via ENVX]
   : > "$SANDBOX/calls.txt"
-  OUT="$(env PATH="$BIN:$PATH" CURL_CALLS="$SANDBOX/calls.txt" \
+  # Fork: the helper only takes content on STDIN (the quoted-argument form is
+  # refused, see scripts/agent-msg.sh), so the text goes in through a pipe.
+  OUT="$(printf '%s' "$1" | env PATH="$BIN:$PATH" CURL_CALLS="$SANDBOX/calls.txt" \
              MARVEEN_TOKEN_FILE="$SANDBOX/token" ${ENVX:-} \
-             /bin/bash "$HELPER" igor hex "$1" 2>"$SANDBOX/err.txt")"
+             /bin/bash "$HELPER" igor hex - 2>"$SANDBOX/err.txt")"
   RC=$?
   ERR="$(cat "$SANDBOX/err.txt")"
   CALLED="$([ -s "$SANDBOX/calls.txt" ] && echo yes || echo no)"
