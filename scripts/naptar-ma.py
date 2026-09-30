@@ -25,6 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 # A hitelesito reteg a gmail-draft.py-ban el (szolgaltatasfiok + JWT). Nem irjuk
 # ujra: modulkent toltjuk be, es csak a megszemelyesitett fiokot / scope-ot
@@ -114,7 +115,10 @@ def formaz(e):
     start = e.get("start", {})
     dt = start.get("dateTime")
     if dt:
-        idopont = datetime.fromisoformat(dt).strftime("%H:%M")
+        # Az esemeny sajat offsetje UTC (Z) is lehet (pl. a Csalad naptar),
+        # ezert Budapestre valtjuk, kulonben ket oraval korabbi idot irna ki.
+        idopont = (datetime.fromisoformat(dt.replace("Z", "+00:00"))
+                   .astimezone(ZoneInfo("Europe/Budapest")).strftime("%H:%M"))
     else:
         idopont = "egesz nap"
     return idopont, e.get("summary", "(cim nelkul)"), e.get("location", "")

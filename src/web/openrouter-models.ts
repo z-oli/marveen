@@ -44,19 +44,26 @@ export interface OpenRouterCatalog {
 
 // Fallback catalog (fleet-model-allocation.md, 2026-07-13). Used until the
 // weekly task writes store/openrouter-models.json.
+// 2026-09-24, Zoli jovahagyasaval, MERVE az OpenRouter elo modell-listajan (457 modell):
+//   google/gemini-2.5-flash -> google/gemini-3.5-flash   (a 2.5-flash 2026-10-16-an leall)
+//   google/gemini-3.1-pro   -> google/gemini-3.1-pro-preview  (a rovid alak NEM letezik)
+// NYITVA MARADT, mert nem hiba-javitas, hanem koltseg-dontes: a tier0 harom azonositoja
+// (`meta-llama/llama-3.3-70b-instruct:free` es `qwen/qwen3-coder:free`) MAR NEM LETEZIK a
+// listan. A fizetos valtozatuk letezik, de az a tier cimkejevel ("Free / bulk") utkozik,
+// ezert Zoli dontesere var.
 const DEFAULT_CATALOG: OpenRouterCatalog = {
   updated: '2026-07-13 (default)',
   tiers: [
     { key: 'tier0', label: 'Tier 0 - Free / bulk', auto: 'meta-llama/llama-3.3-70b-instruct:free',
       manual: ['meta-llama/llama-3.3-70b-instruct:free', 'qwen/qwen3-coder:free'] },
     { key: 'tier1', label: 'Tier 1 - Workhorse', auto: 'deepseek/deepseek-chat-v3.1',
-      manual: ['deepseek/deepseek-chat-v3.1', 'google/gemini-2.5-flash'] },
+      manual: ['deepseek/deepseek-chat-v3.1', 'google/gemini-3.5-flash'] },
     { key: 'tier2', label: 'Tier 2 - Code', auto: 'qwen/qwen3-coder',
       manual: ['qwen/qwen3-coder', 'mistralai/codestral-2508'] },
     { key: 'tier3', label: 'Tier 3 - Heavy reasoning', auto: 'anthropic/claude-sonnet-5',
-      manual: ['anthropic/claude-sonnet-5', 'google/gemini-3.1-pro'] },
-    { key: 'tier4', label: 'Tier 4 - Vision', auto: 'google/gemini-2.5-flash',
-      manual: ['google/gemini-2.5-flash', 'qwen/qwen3-vl-30b-a3b-instruct'] },
+      manual: ['anthropic/claude-sonnet-5', 'google/gemini-3.1-pro-preview'] },
+    { key: 'tier4', label: 'Tier 4 - Vision', auto: 'google/gemini-3.5-flash',
+      manual: ['google/gemini-3.5-flash', 'qwen/qwen3-vl-30b-a3b-instruct'] },
   ],
 }
 
