@@ -36,27 +36,29 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/sleep"; chmod +x "$BIN/sleep"
 send() {  # send <json> [warn_at]
   OUT="$(env PATH="$BIN:$PATH" STUB_JSON="$1" MARVEEN_TOKEN_FILE="$SANDBOX/token" \
              ${2:+MARVEEN_QUEUE_WARN_AT="$2"} \
-             /bin/bash "$HELPER" igor hex "tiszta szoveg" 2>"$SANDBOX/err.txt")"
+             /bin/bash "$HELPER" igor hex - <<<"tiszta szoveg" 2>"$SANDBOX/err.txt")"
+  # FORK: content only via STDIN (the quoted-argument form is refused), and the
+  # OK line carries bajt=<n> right after the id ("tiszta szoveg" = 13 bytes).
   RC=$?
   ERR="$(cat "$SANDBOX/err.txt")"
 }
 has_notice() { printf '%s' "$ERR" | grep -q '^NOTICE:'; }
 
 send '{"id":1,"status":"pending"}'
-ok "old response shape prints exactly the old line" "$([ "$RC" = "0" ] && [ "$OUT" = "OK id=1" ] && echo 0 || echo 1)" "rc=$RC out='$OUT'"
+ok "old response shape prints exactly the old line" "$([ "$RC" = "0" ] && [ "$OUT" = "OK id=1 bajt=13" ] && echo 0 || echo 1)" "rc=$RC out='$OUT'"
 ok "  ...and no notice" "$(has_notice && echo 1 || echo 0)" "err: $ERR"
 
 send '{"id":2,"queue":{"queueDepth":1,"oldestPendingSec":0,"estimatedDelaySec":null}}'
-ok "no delivery history: depth shown, delay OMITTED (not ~0)" "$([ "$OUT" = "OK id=2 queue=1" ] && echo 0 || echo 1)" "out='$OUT'"
+ok "no delivery history: depth shown, delay OMITTED (not ~0)" "$([ "$OUT" = "OK id=2 bajt=13 queue=1" ] && echo 0 || echo 1)" "out='$OUT'"
 
 send '{"id":3,"queue":{"queueDepth":8,"oldestPendingSec":4000,"estimatedDelaySec":4860}}'
-ok "busy recipient: depth and minutes" "$([ "$OUT" = "OK id=3 queue=8 (~81 min)" ] && echo 0 || echo 1)" "out='$OUT'"
+ok "busy recipient: depth and minutes" "$([ "$OUT" = "OK id=3 bajt=13 queue=8 (~81 min)" ] && echo 0 || echo 1)" "out='$OUT'"
 ok "  ...and the notice names the recipient and the delay" \
    "$(has_notice && printf '%s' "$ERR" | grep -q 'waiting for hex, measured delay ~81 min' && echo 0 || echo 1)" "err: $ERR"
 ok "  ...and it is still a successful send" "$([ "$RC" = "0" ] && echo 0 || echo 1)" "rc=$RC"
 
 send '{"id":4,"queue":{"queueDepth":1,"oldestPendingSec":0,"estimatedDelaySec":20}}'
-ok "a 20 s median rounds UP to 1 min, never 0" "$([ "$OUT" = "OK id=4 queue=1 (~1 min)" ] && echo 0 || echo 1)" "out='$OUT'"
+ok "a 20 s median rounds UP to 1 min, never 0" "$([ "$OUT" = "OK id=4 bajt=13 queue=1 (~1 min)" ] && echo 0 || echo 1)" "out='$OUT'"
 
 send '{"id":5,"queue":{"queueDepth":2,"oldestPendingSec":0,"estimatedDelaySec":null}}'
 ok "depth 2 is below the default threshold" "$(has_notice && echo 1 || echo 0)" "err: $ERR"
@@ -70,14 +72,14 @@ ok "MARVEEN_QUEUE_WARN_AT=2 lowers the threshold" "$(has_notice && echo 0 || ech
 # The warning text is the LAST field of the parse; the queue fields must not
 # swallow it, and it must not swallow them.
 send '{"id":9,"targetRunning":false,"warning":"hex nem fut -- elveszik","queue":{"queueDepth":1,"oldestPendingSec":0,"estimatedDelaySec":null}}'
-ok "warning + queue: stdout keeps both" "$([ "$OUT" = "OK id=9 queue=1 (warning)" ] && echo 0 || echo 1)" "out='$OUT'"
+ok "warning + queue: stdout keeps both" "$([ "$OUT" = "OK id=9 bajt=13 queue=1 (warning)" ] && echo 0 || echo 1)" "out='$OUT'"
 ok "  ...and the warning text arrives whole on stderr" \
    "$(printf '%s' "$ERR" | grep -q 'WARNING: hex nem fut -- elveszik' && echo 0 || echo 1)" "err: $ERR"
 
 # An older server sends a warning but no `queue`: the empty queue fields must
 # not let the warning words slide into the depth/minutes slots.
 send '{"id":10,"targetRunning":false,"warning":"hex nem fut -- elveszik"}'
-ok "warning without queue: the old line plus (warning)" "$([ "$OUT" = "OK id=10 (warning)" ] && echo 0 || echo 1)" "out='$OUT'"
+ok "warning without queue: the old line plus (warning)" "$([ "$OUT" = "OK id=10 bajt=13 (warning)" ] && echo 0 || echo 1)" "out='$OUT'"
 ok "  ...and the warning text arrives whole on stderr" \
    "$(printf '%s' "$ERR" | grep -q 'WARNING: hex nem fut -- elveszik' && echo 0 || echo 1)" "err: $ERR"
 

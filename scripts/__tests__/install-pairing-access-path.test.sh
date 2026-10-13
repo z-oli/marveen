@@ -52,7 +52,9 @@ for INSTALLER in install-linux.sh install-macos.sh; do
   # Structural: resolved AFTER the code is typed (the bot writes the pending entry
   # only after the owner's message), and read + write go to that one variable.
   TXT="$(cat "$F")"
-  READ_LINE="$(grep -n 'read -rp "$(_t prompt_pair_code)" PAIR_CODE' "$F" | head -1 | cut -d: -f1)"
+  # FORK: the headless-install contract reads the code through prompt_or_preset
+  # (same read -rp in interactive mode), so either form marks the read.
+  READ_LINE="$(grep -nE 'read -rp "\$\(_t prompt_pair_code\)" PAIR_CODE|prompt_or_preset PAIR_CODE ' "$F" | head -1 | cut -d: -f1)"
   RES_LINE="$(grep -n 'ACCESS_FILE="$(_pairing_access_file)"' "$F" | head -1 | cut -d: -f1)"
   if [ -n "$READ_LINE" ] && [ -n "$RES_LINE" ] && [ "$RES_LINE" -gt "$READ_LINE" ]; then
     pass "resolved after the code is read ($READ_LINE < $RES_LINE)"

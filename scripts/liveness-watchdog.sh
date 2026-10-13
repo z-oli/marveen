@@ -230,8 +230,8 @@ problems=()
 curl -s -o /dev/null --max-time 8 "http://localhost:${PORT}/" \
   || problems+=("a dashboard nem válaszol a ${PORT} porton")
 
-if tmux has-session -t "${AGENT_ID}-channels" 2>/dev/null; then
-  if ! tmux list-panes -t "${AGENT_ID}-channels" -F '#{pane_pid}' 2>/dev/null \
+if tmux has-session -t "=${AGENT_ID}-channels:" 2>/dev/null; then
+  if ! tmux list-panes -t "=${AGENT_ID}-channels:" -F '#{pane_pid}' 2>/dev/null \
        | while read -r p; do pgrep -P "$p" -f claude >/dev/null 2>&1 && echo ok; done \
        | grep -q ok; then
     # A pane with no claude descendant is a shell sitting where the agent should be.
