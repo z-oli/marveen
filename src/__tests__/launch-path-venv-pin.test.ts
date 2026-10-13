@@ -36,6 +36,9 @@ const PINS: Record<string, Pin> = {
   'install-macos.sh': { venv: 0, exempt: 3, why: "the installer's own PATH while installing bun/node" },
   'install-linux.sh': { venv: 0, exempt: 7, why: "the installer's own PATH, and the lines it appends to the user's shell rc" },
   'install-lang.sh': { venv: 0, exempt: 2, why: "the installer's own PATH, and the line it appends to the user's shell rc" },
+  // FORK: two fork-only scripts that build a PATH but launch no claude session.
+  'scripts/liveness-watchdog.sh': { venv: 0, exempt: 1, why: 'fork: the launchd PATH used only to CHECK that claude is resolvable; launches nothing' },
+  'scripts/upstream-szinkron.sh': { venv: 0, exempt: 1, why: 'fork: the sync job PATH for git/node/npm; launches no claude' },
 }
 
 const EXTS = new Set(['.sh', '.ts', '.mjs', '.js', '.cjs', '.py', '.ps1'])
