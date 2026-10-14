@@ -46,13 +46,15 @@ chmod +x "$BIN/curl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/sleep"; chmod +x "$BIN/sleep"
 
 # run <helper> [VAR=value ...]: a clean environment except the given variables.
+# Fork: agent-msg.sh takes the content ONLY from STDIN (the quoted-argument form
+# is refused there, see CLAUDE.md), so the send case feeds 'tiszta' via <<<.
 run() {
   local helper="$1"; shift
   : > "$SANDBOX/curl.log"
   env -u MARVEEN_WEB_PORT -u WEB_PORT -u MARVEEN_API_BASE \
       PATH="$BIN:$PATH" CURL_LOG="$SANDBOX/curl.log" "$@" \
-      /bin/bash "$INST/scripts/$helper" $( [ "$helper" = agent-msg.sh ] && echo 'igor hex tiszta' || echo 1 ) \
-      >"$SANDBOX/out.txt" 2>"$SANDBOX/err.txt"
+      /bin/bash "$INST/scripts/$helper" $( [ "$helper" = agent-msg.sh ] && echo 'igor hex -' || echo 1 ) \
+      <<<'tiszta' >"$SANDBOX/out.txt" 2>"$SANDBOX/err.txt"
   URL="$(head -1 "$SANDBOX/curl.log")"
 }
 port_is() { case "$URL" in "http://localhost:$1/"*) echo 0 ;; *) echo 1 ;; esac; }
