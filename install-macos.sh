@@ -126,11 +126,18 @@ emit_result() {
 }
 
 # Step transition: close the previous step (ok) and open the new one (start).
+# Call sites assign the step LITERALLY first (`INSTALL_STEP="x"; set_step`):
+# the upstream installer tests anchor on that exact text (installer-early-probe-
+# scope, installer-node22-abi), so the step name must stay visible as an
+# assignment. The previously open step is tracked separately in _OPEN_STEP.
+_OPEN_STEP=""
 set_step() {
-  if [ -n "${INSTALL_STEP:-}" ] && [ "$INSTALL_STEP" != "init" ] && [ "$INSTALL_STEP" != "$1" ]; then
-    emit_progress "$INSTALL_STEP" ok
+  local new="${1:-$INSTALL_STEP}"
+  if [ -n "$_OPEN_STEP" ] && [ "$_OPEN_STEP" != "init" ] && [ "$_OPEN_STEP" != "$new" ]; then
+    emit_progress "$_OPEN_STEP" ok
   fi
-  INSTALL_STEP="$1"
+  INSTALL_STEP="$new"
+  _OPEN_STEP="$new"
   emit_progress "$INSTALL_STEP" start
 }
 
@@ -288,7 +295,7 @@ fi
 echo ""
 
 # Step 1: Check prerequisites
-set_step "prerequisites"
+INSTALL_STEP="prerequisites"; set_step
 echo -e "${BOLD}$(_t section_1)${NC}"
 
 # ── macOS verzio pre-flight (MACOSOLD1) ──────────────────────────────
@@ -456,7 +463,7 @@ if ! command -v claude &>/dev/null; then
 fi
 echo -e "  ${GREEN}✓${NC} Claude Code CLI"
 
-set_step "claude-setup"
+INSTALL_STEP="claude-setup"; set_step
 # Step 2: Claude Code first-run flags (BEFORE auth login)
 #
 # Reason: ha a `claude auth login` browser-flow megakad (timeout, Ctrl+C,
@@ -503,7 +510,7 @@ except Exception:
 PYEOF
 echo -e "  ${GREEN}✓${NC} Claude Code first-run flags pre-set"
 
-set_step "claude-auth"
+INSTALL_STEP="claude-auth"; set_step
 # Step 2b: Claude authentication (kept tolerant -- ha megakad, folytatjuk)
 echo ""
 echo -e "${BOLD}$(_t section_2_macos)${NC}"
@@ -582,7 +589,7 @@ else
   echo -e "    ${DIM}Javítás, ha ebből a terminálból használod a claude-ot (pl. a párosításhoz): \`claude /login\` -> \`claude --print \"ping\"\` újra.${NC}"
 fi
 
-set_step "personal-info"
+INSTALL_STEP="personal-info"; set_step
 # Step 3: Personal info
 echo ""
 echo -e "${BOLD}$(_t section_3_macos)${NC}"
@@ -591,7 +598,7 @@ prompt_or_preset OWNER_NAME "$(_t prompt_your_name)" "Owner" "MARVEEN_OWNER_NAME
 # It will be set automatically during the Telegram pairing flow.
 CHAT_ID="0"
 
-set_step "channel-setup"
+INSTALL_STEP="channel-setup"; set_step
 # Step 4: Channel provider setup
 echo ""
 echo -e "${BOLD}$(_t section_4_macos)${NC}"
@@ -960,7 +967,7 @@ resolve_service_node() {
 }
 
 # Step 5: Install dependencies
-set_step "npm-install"
+INSTALL_STEP="npm-install"; set_step
 echo ""
 echo -e "${BOLD}$(_t section_5)${NC}"
 cd "$INSTALL_DIR"
@@ -976,7 +983,7 @@ fi
 ok "$(_t macos.npm_done)"
 
 # Build TypeScript
-set_step "typescript-build"
+INSTALL_STEP="typescript-build"; set_step
 echo -e "$(_t macos.building)"
 if ! npm run build --loglevel warn; then
   fail "TypeScript forditas sikertelen. Ellenorizd a hibauzeneteket fentebb."
@@ -996,7 +1003,7 @@ if [ -d "$INSTALL_DIR/dist" ]; then
   [ -n "$_built_commit" ] && printf '%s\n' "$_built_commit" > "$INSTALL_DIR/dist/.built-commit"
 fi
 
-set_step "configuration"
+INSTALL_STEP="configuration"; set_step
 # Step 6: Configuration
 echo ""
 echo -e "${BOLD}$(_t section_6_macos)${NC}"
@@ -1541,7 +1548,7 @@ if ! command -v ffmpeg &>/dev/null; then
 fi
 echo -e "$(_t macos.ffmpeg_done)"
 
-set_step "bumblebee"
+INSTALL_STEP="bumblebee"; set_step
 # Go + bumblebee (supply-chain scanner)
 echo ""
 echo -e "  Go + bumblebee (supply-chain scanner)..."
@@ -1598,7 +1605,7 @@ else
   echo -e "  ${DIM}  Kezzel: brew install go && git clone https://github.com/perplexityai/bumblebee /tmp/bb && (cd /tmp/bb && go build -o ~/.local/bin/bumblebee ./cmd/bumblebee)${NC}"
 fi
 
-set_step "launchagent"
+INSTALL_STEP="launchagent"; set_step
 # Step 7: LaunchAgent setup
 echo ""
 echo -e "${BOLD}$(_t section_7)${NC}"
@@ -1942,7 +1949,7 @@ fi
 # into the MARVEEN_RESULT enrollBundle field, never into a progress line.
 ENROLL_BUNDLE=""
 if [ -n "${MARVEEN_ENROLL_PUBKEY:-}" ]; then
-  set_step "enroll"
+  INSTALL_STEP="enroll"; set_step
   echo ""
   echo -e "${BOLD}Remote eszkoz enroll (Bridge)${NC}"
   ENROLL_OUT="$(cd "$INSTALL_DIR" && npm run --silent remote-enroll -- "$MARVEEN_ENROLL_PUBKEY" 2>"$INSTALL_DIR/store/enroll.stderr.log")" || ENROLL_OUT=""
@@ -2041,5 +2048,10 @@ fi
 
 # INSTWIZ1: close the machine progress protocol. emit_result is once-only, so
 # if the enroll leg above already reported a failure this stays a no-op.
-emit_progress "$INSTALL_STEP" ok
-emit_result true "" "$ENROLL_BUNDLE"
+# Guarded: the upstream closing-section tests run this tail on its own, without
+# the INSTWIZ1 helpers defined at the top, and an unguarded call there trips the
+# ERR trap. In the real script both functions always exist.
+if declare -F emit_result >/dev/null 2>&1; then
+  emit_progress "$INSTALL_STEP" ok
+  emit_result true "" "${ENROLL_BUNDLE:-}"
+fi
