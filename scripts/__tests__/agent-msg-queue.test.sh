@@ -88,13 +88,13 @@ ok "  ...and the warning text arrives whole on stderr" \
 # no caller reads it as a failure and re-sends), with the queue fields intact.
 send '{"id":11,"queued":true,"targetRunning":false,"warning":"hex most nem fut: SORBAN VAR","queue":{"queueDepth":2,"oldestPendingSec":0,"estimatedDelaySec":null}}'
 ok "queued + queue: OK line keeps the prefix and the depth, says queued, rc 0" \
-   "$([ "$RC" = "0" ] && [ "$OUT" = "OK id=11 queue=2 (queued: target not running, delivered when it starts)" ] && echo 0 || echo 1)" "rc=$RC out='$OUT'"
+   "$([ "$RC" = "0" ] && [ "$OUT" = "OK id=11 bajt=13 queue=2 (queued: target not running, delivered when it starts)" ] && echo 0 || echo 1)" "rc=$RC out='$OUT'"
 ok "  ...and the QUEUED note with the whole warning text is on stderr" \
    "$(printf '%s' "$ERR" | grep -q '^QUEUED id=11  NOTE: hex most nem fut: SORBAN VAR' && echo 0 || echo 1)" "err: $ERR"
 ok "  ...and it is never a FAIL line" "$(printf '%s%s' "$OUT" "$ERR" | grep -q '^FAIL' && echo 1 || echo 0)" "out='$OUT' err: $ERR"
 send '{"id":12,"queued":true,"targetRunning":false,"warning":"hex most nem fut: SORBAN VAR"}'
 ok "queued without queue: plain OK id, queued suffix, rc 0" \
-   "$([ "$RC" = "0" ] && [ "$OUT" = "OK id=12 (queued: target not running, delivered when it starts)" ] && echo 0 || echo 1)" "rc=$RC out='$OUT'"
+   "$([ "$RC" = "0" ] && [ "$OUT" = "OK id=12 bajt=13 (queued: target not running, delivered when it starts)" ] && echo 0 || echo 1)" "rc=$RC out='$OUT'"
 ok "  ...and the QUEUED note is on stderr" \
    "$(printf '%s' "$ERR" | grep -q '^QUEUED id=12  NOTE: ' && echo 0 || echo 1)" "err: $ERR"
 
