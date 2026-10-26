@@ -17,6 +17,7 @@ Run:  python3 scripts/__tests__/agent-msg-priority.test.py
 import http.server
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -64,9 +65,16 @@ def main():
     def run(args, answer=None, stdin=None):
         ANSWER['body'] = answer if answer is not None else {'id': 7, 'status': 'pending', 'queue': QUEUE}
         del REQS[:]
+        # Fork: agent-msg.sh takes the content ONLY from STDIN (an argument is refused,
+        # the shell can truncate it silently), so a trailing content argument 'x' is fed
+        # as '-' + STDIN. The fork's OK line also carries bajt=<n> (the byte count it
+        # verified); drop it so the upstream expectations compare the same fields.
+        if stdin is None and args and args[-1] == 'x' and len(args) >= 3:
+            args, stdin = args[:-1] + ['-'], 'x\n'
         io = {'input': stdin} if stdin is not None else {'stdin': subprocess.DEVNULL}
         r = subprocess.run(['bash', SCRIPT] + args, capture_output=True, text=True, env=env, timeout=60, **io)
-        return r.returncode, r.stdout.strip(), r.stderr.strip(), list(REQS)
+        out = re.sub(r' bajt=\d+', '', r.stdout.strip())
+        return r.returncode, out, r.stderr.strip(), list(REQS)
 
     try:
         # POSITIVE CONTROLS: the accepted forms behave as before.

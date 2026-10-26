@@ -20,12 +20,39 @@ Hasznalat:
 
 import importlib.util
 import json
+import os
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
+
+
+def _helyi_zona():
+    """A telepites zonaja: SCHEDULER_TZ (config-overrides.json, utana .env), kulonben a
+    gep sajat zonaja NEVVEL (/etc/localtime), hogy a nyari/teli atallas szabalya megmaradjon.
+    Ugyanaz a sorrend, mint a scripts/usage-collect.py-ban (ISSUE1895)."""
+    gyoker = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        ov = json.load(open(os.path.join(gyoker, "store", "config-overrides.json"), encoding="utf-8"))
+        if isinstance(ov, dict) and ov.get("SCHEDULER_TZ"):
+            return str(ov["SCHEDULER_TZ"]).strip()
+    except Exception:
+        pass
+    try:
+        for sor in open(os.path.join(gyoker, ".env"), encoding="utf-8", errors="replace"):
+            if sor.strip().startswith("SCHEDULER_TZ="):
+                v = sor.strip().split("=", 1)[1].strip().strip("\"'")
+                if v:
+                    return v
+    except Exception:
+        pass
+    cel = os.path.realpath("/etc/localtime")
+    return cel.split("zoneinfo/", 1)[1] if "zoneinfo/" in cel else "UTC"
+
+
+HELYI_TZ = ZoneInfo(_helyi_zona())
 
 # A hitelesito reteg a gmail-draft.py-ban el (szolgaltatasfiok + JWT). Nem irjuk
 # ujra: modulkent toltjuk be, es csak a megszemelyesitett fiokot / scope-ot
@@ -78,10 +105,24 @@ def _oauth_token():
         return json.load(r)["access_token"]
 
 
+def nap_hatarai(nap):
+    """A nap eleje es vege Budapest szerint, a NAPRA ervenyes offsettel.
+
+    2026-10-25-ig itt fix +02:00 allt: telen (CET, UTC+1) ez az ablakot egy oraval
+    elcsusztatta, az elozo nap 23:00-as esemenye bekerult, a mai 23:00 utani kimaradt.
+    """
+    tz = HELYI_TZ
+    d = date.fromisoformat(str(nap))
+    eleje = datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=tz)
+    vege = datetime(d.year, d.month, d.day, 23, 59, 59, tzinfo=tz)
+    return eleje.isoformat(), vege.isoformat()
+
+
 def privat_esemenyek(naptar_id, nap, token):
+    t_min, t_max = nap_hatarai(nap)
     q = urllib.parse.urlencode({
-        "timeMin": f"{nap}T00:00:00+02:00",
-        "timeMax": f"{nap}T23:59:59+02:00",
+        "timeMin": t_min,
+        "timeMax": t_max,
         "singleEvents": "true",
         "orderBy": "startTime",
     })
@@ -97,11 +138,12 @@ def esemenyek(fiok, nap):
     gd.SUBJECT_USER = fiok
     gd.SCOPE = CAL_SCOPE
     token = gd.access_token()
+    t_min, t_max = nap_hatarai(nap)
     q = urllib.parse.urlencode({
-        # A Google a naptar sajat idozonajaban ertelmezi, a +02:00 offset teszi
-        # egyertelmuve. Nyari idoszamitas: CEST = UTC+2.
-        "timeMin": f"{nap}T00:00:00+02:00",
-        "timeMax": f"{nap}T23:59:59+02:00",
+        # A Google a naptar sajat idozonajaban ertelmezi, a kiirt offset teszi
+        # egyertelmuve (nyaron +02:00, telen +01:00, a naptol fuggoen).
+        "timeMin": t_min,
+        "timeMax": t_max,
         "singleEvents": "true",   # ismetlodo esemenyek peldanyokra bontva
         "orderBy": "startTime",
     })
@@ -118,7 +160,7 @@ def formaz(e):
         # Az esemeny sajat offsetje UTC (Z) is lehet (pl. a Csalad naptar),
         # ezert Budapestre valtjuk, kulonben ket oraval korabbi idot irna ki.
         idopont = (datetime.fromisoformat(dt.replace("Z", "+00:00"))
-                   .astimezone(ZoneInfo("Europe/Budapest")).strftime("%H:%M"))
+                   .astimezone(HELYI_TZ).strftime("%H:%M"))
     else:
         idopont = "egesz nap"
     return idopont, e.get("summary", "(cim nelkul)"), e.get("location", "")
