@@ -72,11 +72,14 @@ beforeEach(() => {
   writeFileSync(envLog, '')
 })
 
-function run(script: string, args: string[], env: Record<string, string>): Promise<{ code: number; out: string }> {
+// Fork: agent-msg.sh takes the content ONLY on STDIN (the quoted-argument form is refused, 45494a87), so the
+// agent-msg.sh cases pass '-' and feed the text through `stdin`.
+function run(script: string, args: string[], env: Record<string, string>, stdin?: string): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
-    execFile('bash', [script, ...args], {
+    const child = execFile('bash', [script, ...args], {
       env: { PATH: `${stubDir}:${process.env.PATH}`, ...env }, timeout: 20_000,
     }, (err, stdout, stderr) => resolve({ code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, out: stdout + stderr }))
+    if (stdin !== undefined) child.stdin!.end(stdin)
   })
 }
 
@@ -93,9 +96,9 @@ function expectHeaderNotArgv(argv: string, env: string, headers: string): void {
 describe('agent-msg.sh: the token and the message text are not on curl\'s argv', () => {
   it('the server gets the token header and the body; the curl argv and env carry neither; nothing on disk', async () => {
     const tmp = mkdtempSync(join(dir, 'tmp-'))
-    const r = await run(join(REPO, 'scripts', 'agent-msg.sh'), ['dani', 'samu', CONTENT], {
+    const r = await run(join(REPO, 'scripts', 'agent-msg.sh'), ['dani', 'samu', '-'], {
       MARVEEN_API_BASE: `http://127.0.0.1:${port()}`, MARVEEN_TOKEN_FILE: tokenFile, TMPDIR: tmp,
-    })
+    }, CONTENT)
     expect(r.code, r.out).toBe(0)
     expect(seen).toHaveLength(1)
     expect(seen[0].headers.authorization).toBe(`Bearer ${TOKEN}`)
@@ -110,9 +113,9 @@ describe('agent-msg.sh: the token and the message text are not on curl\'s argv',
   // Dani 65583: an exported TOKEN in the caller's environment kept its export attribute through the plain assignment,
   // so curl's environment carried the dashboard token.
   it('a TOKEN the caller exported does not carry the dashboard token into curl\'s environment', async () => {
-    const r = await run(join(REPO, 'scripts', 'agent-msg.sh'), ['dani', 'samu', 'x'], {
+    const r = await run(join(REPO, 'scripts', 'agent-msg.sh'), ['dani', 'samu', '-'], {
       MARVEEN_API_BASE: `http://127.0.0.1:${port()}`, MARVEEN_TOKEN_FILE: tokenFile, TOKEN: 'ambient-foreign-value',
-    })
+    }, 'x')
     expect(r.code, r.out).toBe(0)
     expect(seen[0].headers.authorization).toBe(`Bearer ${TOKEN}`)
     const env = readFileSync(envLog, 'utf-8')
@@ -123,9 +126,9 @@ describe('agent-msg.sh: the token and the message text are not on curl\'s argv',
   it('unchanged: the exit code says what happened (an answer with no message id is a failure, not "sent")', async () => {
     reply = '{"error":"x"}'
     const before = seen.length
-    const r = await run(join(REPO, 'scripts', 'agent-msg.sh'), ['dani', 'samu', 'x'], {
+    const r = await run(join(REPO, 'scripts', 'agent-msg.sh'), ['dani', 'samu', '-'], {
       MARVEEN_API_BASE: `http://127.0.0.1:${port()}`, MARVEEN_TOKEN_FILE: tokenFile,
-    })
+    }, 'x')
     reply = '{"id":1}'
     expect(r.code).not.toBe(0)
     expect(seen.length).toBeGreaterThan(before)
@@ -134,9 +137,9 @@ describe('agent-msg.sh: the token and the message text are not on curl\'s argv',
   it('an empty token file stops before curl: nothing is sent, no empty Bearer', async () => {
     const empty = join(mkdtempSync(join(dir, 'e-')), '.dashboard-token')
     writeFileSync(empty, '\n')
-    const r = await run(join(REPO, 'scripts', 'agent-msg.sh'), ['dani', 'samu', 'x'], {
+    const r = await run(join(REPO, 'scripts', 'agent-msg.sh'), ['dani', 'samu', '-'], {
       MARVEEN_API_BASE: `http://127.0.0.1:${port()}`, MARVEEN_TOKEN_FILE: empty,
-    })
+    }, 'x')
     expect(r.code).not.toBe(0)
     expect(r.out).toMatch(/is empty; nothing was sent/)
     expect(seen).toHaveLength(0)
