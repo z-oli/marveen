@@ -30,6 +30,8 @@ export interface ScaffoldFrags {
   payload: (kind: ApiPayloadKind) => string
   /** The absolute path of scripts/recipient-ledger.mjs. */
   ledgerScript: string
+  /** Fork: the path of scripts/agent-msg.sh, the verified STDIN send the curl-fallback level-1 recipe uses. */
+  agentMsgScript: string
 }
 
 export const ONE_FILE_ONE_SEND_EN = 'One file, one send: write it, send it, and only then the next one; never prepare two in parallel (it is the same file, the second would overwrite the first). After a successful send the helper empties the file, and it stops with an error on an empty file: it never sends an old text.'
@@ -137,14 +139,14 @@ export function buildAutonomyBodyEn(name: string, helper: boolean, strict: boole
     '',
     '**Level 1 (flag only)**: send an inter-agent notice to the main agent, but do NOT carry out the action. Then STOP.',
     ...(helper ? autonomyLevel1HelperEn(name, strict, f) : [
-      '```bash',
-      `curl -s -X POST ${f.dashboardOrigin}/api/messages \\`,
-      '  -H "Content-Type: application/json" \\',
-      `  -H "Authorization: Bearer $(cat ${tokenPath})" \\`,
-      `  --data-binary @- <<'JSON'`,
-      `{"from":"${name}","to":"${f.mainAgentId}","content":"[NOTICE] CATEGORY_KEY: WHAT I wanted to do, but level 1 means I only flag it."}`,
-      'JSON',
-      '```',
+      'The send goes through agent-msg.sh, the content on STDIN: it checks the HTTP code AND',
+      'the id. A quoted argument is not used because the shell can truncate it silently, and',
+      'the send still looks successful (2026-08-27). Here that would be the most expensive failure:',
+      'if the notice is lost, the STOP still happens, only nobody knows about it.',
+      "cat > /tmp/felhivas.txt <<'MSG'",
+      '[NOTICE] CATEGORY_KEY: WHAT I wanted to do, but level 1 means I only flag it.',
+      'MSG',
+      `bash ${f.agentMsgScript} ${name} ${f.mainAgentId} - < /tmp/felhivas.txt`,
       'WARNING: the double-quoted `-d "{...}"` form is FORBIDDEN **for EVERY API payload** -- inter-agent',
       'message, memory save and PATCH, daily log, case note, kanban alike: the shell executes the backtick',
       'and the `$(...)` inside the payload, the command\'s OUTPUT takes the place of the text, and the send',
@@ -163,8 +165,26 @@ export function buildAutonomyBodyEn(name: string, helper: boolean, strict: boole
     '**Level 2 (approval required)**: request approval through the API BEFORE you act.',
     '',
     ...(helper ? autonomyLevel2HelperEn(name, f) : [
-      'Requesting approval (POST):',
-      `curl -s -X POST ${f.dashboardOrigin}/api/approvals -H "Content-Type: application/json" -H "Authorization: Bearer $(cat ${tokenPath})" -d '{"agent_id":"${name}","category":"CATEGORY_KEY","action_description":"What you plan to do and why","timeout_seconds":3600}'`,
+      'Requesting approval (POST). The action_description is FREE TEXT, and the owner reads IT',
+      'before approving -- so it cannot travel as a quoted argument: a quote would silently cut it,',
+      'the request would still be created, and the owner would approve something other than you asked.',
+      'The description comes from a file, python builds the JSON, and the HTTP code is printed too.',
+      "cat > /tmp/approval-leiras.txt <<'TXT'",
+      'What you plan to do and why (free text, several lines are fine)',
+      'TXT',
+      `AGENT=${name} KATEGORIA=CATEGORY_KEY python3 - <<'PY'`,
+      'import json, os, urllib.request',
+      `tok = open("${tokenPath}").read().strip()`,
+      'torzs = json.dumps({"agent_id": os.environ["AGENT"],',
+      '                    "category": os.environ["KATEGORIA"],',
+      '                    "action_description": open("/tmp/approval-leiras.txt").read().strip(),',
+      '                    "timeout_seconds": 3600}).encode()',
+      `k = urllib.request.Request("${f.dashboardOrigin}/api/approvals", data=torzs,`,
+      '                           headers={"Content-Type": "application/json",',
+      '                                    "Authorization": "Bearer " + tok})',
+      'with urllib.request.urlopen(k) as v:',
+      '    print(v.status, v.read().decode())',
+      'PY',
       'Use the id in the response to look up the decision.',
       '',
       'Looking up the decision (GET, repeat every 60 seconds):',

@@ -97,6 +97,7 @@ export function scaffoldFrags(name: string): ScaffoldFrags {
     ownToken: tokenPath !== mainTokenPath(),
     payload: (kind) => shellWord(apiPayloadPath(name, kind)),
     ledgerScript: join(PROJECT_ROOT, 'scripts', 'recipient-ledger.mjs'),
+    agentMsgScript: `${PROJECT_ROOT}/scripts/agent-msg.sh`,
   }
 }
 
