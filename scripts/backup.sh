@@ -220,6 +220,19 @@ fi
 # (src/env.ts: read from .env, default "marveen" when unset) instead of
 # hardcoding one deployment's prefix. Parsing mirrors env.ts: last definition
 # wins, surrounding matching quotes stripped.
+# The repo's OWN working tree beyond git (2026-11-02, restore-gap audit with Zoli: "if I
+# smash the Mac mini, can we come back without loss?"). Measured on the 11-02 archive:
+# ~110 untracked or locally modified files (the agent's own scripts: RSI2 signal sender,
+# macro report, mail/calendar readers, Garmin sync, paper-trading runners) were in NO
+# backup and NOT on GitHub -- the local-commits bundle carries only COMMITTED work. Take
+# every untracked (not ignored) and every modified tracked file, outside store/ (already
+# taken above) and the regenerable trees. Plus the project-level agent definitions
+# (.claude/agents: quarantine-reader, web-kutato), which $HOME/.claude/agents does not hold.
+if command -v git >/dev/null 2>&1 && [[ -d "${REPO_ROOT}/.git" ]]; then
+  { git -C "${REPO_ROOT}" ls-files --others --exclude-standard; git -C "${REPO_ROOT}" ls-files -m; } \
+    | grep -vE '^(store/|backups/|node_modules/|agents/|dist/)' | sort -u >> "${REPOLIST}" || true
+fi
+add_if "${REPOLIST}" "${REPO_ROOT}" .claude/agents
 MAIN_AGENT_ID="marveen"
 if [[ -f "${REPO_ROOT}/.env" ]]; then
   # `|| true`: with `set -o pipefail`, a no-match grep would otherwise fail the
@@ -231,6 +244,9 @@ if [[ -f "${REPO_ROOT}/.env" ]]; then
 fi
 if [[ -d "${HOME}/Library/LaunchAgents" ]]; then
   ( cd "${HOME}" && find Library/LaunchAgents -maxdepth 1 -name "com.${MAIN_AGENT_ID}.*.plist" -print ) >> "${HOMELIST}"
+  # The agent's own launchd jobs outside the fleet prefix (2026-11-02 audit): IBC
+  # attendance web app + its Tailscale funnel, Garmin sync, macro report.
+  ( cd "${HOME}" && find Library/LaunchAgents -maxdepth 1 \( -name 'hu.ibc.*.plist' -o -name 'hu.mzx.*.plist' \) -print ) >> "${HOMELIST}"
 fi
 # systemd --user units (Linux): the Linux counterpart of the LaunchAgents
 # above. Only this fleet's own units are taken, never other applications'
@@ -252,6 +268,9 @@ if [[ -d "${HOME}/.config/systemd/user" ]]; then
   ( cd "${HOME}" && find .config/systemd/user -mindepth 2 -maxdepth 2 -path '*.wants/*' \
       \( -name "${SERVICE_ID}-*.service" -o -name "${SERVICE_ID}-*.timer" \) -print ) >> "${HOMELIST}"
 fi
+# The IBC attendance web app (live pilot, teachers' data in its SQLite DB) lives outside
+# the repo in ~/ibc-oranaplo and was in no backup until 2026-11-02.
+add_if "${HOMELIST}" "${HOME}" ibc-oranaplo
 
 # --- Local commits that live on no remote. ---------------------------------
 # This archive deliberately carries unversioned state, not the source: the
