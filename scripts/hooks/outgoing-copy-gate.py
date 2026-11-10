@@ -30,6 +30,7 @@ mean "let it through". The block message says how to make it inspectable.
 Contract: PreToolUse. Reads the hook payload on stdin, exit 0 = allow,
 exit 2 = block (stderr goes back to the model).
 """
+import hashlib
 import html
 import json
 import os
@@ -1766,6 +1767,30 @@ def _py_walk_verdict(path, text, read_script):
     return "clean"
 
 
+# FORK GMAILDRAFT1110 (owner decision 2026-11-10, Discord 1569751185135636501): the install's Gmail draft writer
+# (scripts/gmail-draft.py) creates drafts through the Gmail API with the gmail.compose scope only, so it needs
+# urllib and the openssl CLI, which are off the draft allowlist above. It is exempted BY CONTENT, not by name: the
+# exemption holds only while the file's bytes hash to a pinned value, so any edit (a send call added, an import
+# changed) makes the script an ordinary unproven run again, i.e. a send. Re-pin only after reading the new file.
+_PY_PINNED_DRAFT_WRITERS = {
+    os.path.join("scripts", "gmail-draft.py"):
+        "bbdcb43199d3e25993a64d30f80c22e345cd1937a690a7899ec895f640a52e32",
+}
+
+
+def _pinned_draft_writer(path, text) -> bool:
+    """True when path is this install's pinned draft writer and its content still matches the pin."""
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))  # scripts/hooks/x.py
+        rel = os.path.relpath(os.path.realpath(path), root)
+    except (OSError, ValueError):
+        return False
+    pin = _PY_PINNED_DRAFT_WRITERS.get(rel)
+    if not pin or text is None:
+        return False
+    return hashlib.sha256(text.encode("utf-8")).hexdigest() == pin
+
+
 def _py_address_run_sends(paths, read_script) -> bool:
     """A python script run with an address flag: a send unless some candidate is readable and every readable
     candidate walks 'clean' (COPYGATEDRAFTFP1104)."""
@@ -1778,6 +1803,8 @@ def _py_address_run_sends(paths, read_script) -> bool:
         if text is None:
             continue
         found = True
+        if _pinned_draft_writer(path, text):
+            continue
         if _py_walk_verdict(path, text, read_script) != "clean":
             return True
     return not found
