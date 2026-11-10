@@ -55,6 +55,8 @@ DEFAULT_NON_DISABLEABLE = frozenset({
     "second-reviewer-gate",
     # egress, provenance, credentials, destructive commands
     "egress-gate",
+    "outbound-data-gate",       # fork: outbound data to an unlisted host (host-local wiring)
+    "mcp-write-gate",           # fork: outward-facing / destructive MCP calls (host-local wiring)
     "provenance-gate",
     "digest-provenance-gate",
     "credential-gate",

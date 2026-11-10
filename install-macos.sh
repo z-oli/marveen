@@ -202,10 +202,11 @@ run_priv() {
     # inherits whatever follows on stdin (the data of a `producer | run_priv cmd`
     # pipe). For a plain `run_priv cmd` the trailing `cat` reads EOF and the
     # command gets no extra input.
-    { printf '%s\n' "$__MARVEEN_SUDO_PW"; cat; } | sudo -S -p '' "$@"
+    # /usr/bin/sudo by absolute path (MACROOTFROMCLONE1106): a PATH entry like ~/.bun/bin is the user's.
+    { printf '%s\n' "$__MARVEEN_SUDO_PW"; cat; } | /usr/bin/sudo -S -p '' "$@"
   else
     # No captured password (interactive run with a TTY): behave like plain sudo.
-    sudo "$@"
+    /usr/bin/sudo "$@"
   fi
 }
 # --- INSTWIZ1 headless sudo (macOS, MACHEADLESS805) END ---
