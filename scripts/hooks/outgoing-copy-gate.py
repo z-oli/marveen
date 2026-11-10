@@ -3164,15 +3164,6 @@ def accent_check_tokens(prose: str):
             continue
         if "-" not in tok and tok[0].isupper() and not _at_sentence_start(prose, m.start()):
             continue
-        # ARVA TOLDALEK (2026-08-27): a technikai stripper kiveszi a kotojel ELOTTI
-        # gazda-tokent ("CLAUDE.md-ket" -> " -ket"), es ami marad, az onallo szonak
-        # latszik. A HYPHEN_WORD ilyenkor nem tud egesz kotojeles alakot fogni, mert
-        # a bal fele mar nincs ott. Igy lett a "-ket" targyragos toldalekbol "ket",
-        # es a kapu ket hibatlan uzenetet dobott vissza egymas utan.
-        # A feltetel szuk: a kotojel KOZVETLENUL a token elott all. Egy valodi
-        # onallo szo ele nem kerul tapado kotojel (az em dash amugy is tiltott).
-        if m.start() > 0 and prose[m.start() - 1] == "-":
-            continue
         out.append((tok.lower(), m.start()))
     return out
 
@@ -3213,12 +3204,6 @@ def _hit_context(prose: str, pos: int, length: int) -> str:
 # A maszk ezert kivagja a legalabb ket tagu, csupa kisbetus, kotojellel osszekotott
 # alakokat. Egy valodi magyar mondat nem all ilyen alakbol, es a NAGYBETUS kezdetu
 # osszetetelekre (Chrome-ot) mar van kulon, szigorubb szabaly folotte.
-# GATECLI827 (2026-08-27): ugyanez az osztaly a PARANCSSORI KAPCSOLON. Egy hasznalati
-# utmutatoban a "--ar 1006" kapcsolobol "ar" lesz, es az a szotarban ott van, mert
-# onallo szokent "ár" kellene. A kapu emiatt dobta vissza azt az uzenetet, ami eppen
-# azt magyarazta el a gazdanak, hogyan hasznalja a naplot. Egy kapcsolonev nem magyar
-# szo, tehat technikai regio, mint az utvonal vagy a fajlnev. A lookbehind miatt a
-# "md-ket" alaku toldalek NEM esik ide: ott betu all a kotojel elott.
 # 2026-08-24-i talalat: a szambol es kotojeles magyar toldalekbol allo alak
 # ("8:09-es", "2-es", "17:06-kor") a szobontonal puszta "es"/"kor" tokenne esik
 # szet, amit a szotar hibanak lat -- pedig ott toldalek, nem szo. A javitas nem a szotarbol
@@ -3258,7 +3243,6 @@ _TECH_SUFFIXED = r"""
       | \b[A-ZÁÉÍÓÖŐÚÜŰ][^\W\d_]*-[a-záéíóöőúüű]{1,4}\b   # tulajdonnev + toldalek (Chrome-ot, Drive-ra)
       | \blevel\s+\d+\b            # angol "level 1" (autonomia-szint, log-szint)
       | (?:(?<![\w-])--)?\b[a-z]+(?:-[a-z]+){1,4}\b    # kotojeles kisbetus azonosito (feladat- es skill-nevek), --flag alakban is
-      | (?<![\w-])--?[A-Za-z][\w-]*  # PARANCSSORI KAPCSOLO (--ar, --n, -n)
 """
 # COPYGATEHOMONUM1105 (2026-11-06): the plain number branch (the first line above) took ANY Unicode letter as its suffix
 # ([^\W\d_]+), so a Cyrillic or Greek letter in such a suffix was masked away before the homoglyph rule ran. It now
